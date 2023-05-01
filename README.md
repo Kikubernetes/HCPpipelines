@@ -1,3 +1,7 @@
+This repository aims to arrange HCP pipelines so that they can be applied to our own data on local computers. The project started on May 1, 2023.  
+We plan to make slow but steady progress.  
+See below for information on the original repository.
+
 # HCP Pipelines 
 
 The HCP Pipelines product is a set of tools (primarily, but not exclusively,
