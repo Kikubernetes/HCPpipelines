@@ -66,8 +66,8 @@
 #
 #   Retrieve the following command line parameter values if specified
 #
-#   --StudyFolder= - primary study folder containing subject ID subdirectories
-#   --Subjlist=    - quoted, space separated list of subject IDs on which
+#   --StudyFolder= - primary study folder containing session ID subdirectories
+#   --Sessionlist=    - quoted, space separated list of session IDs on which
 #                    to run the pipeline
 #   --runlocal     - if specified (without an argument), processing is run
 #                    on "this" machine as opposed to being submitted to a
@@ -77,7 +77,7 @@
 #   line specified parameters
 #
 #   command_line_specified_study_folder
-#   command_line_specified_subj_list
+#   command_line_specified_session_list
 #   command_line_specified_run_local
 #
 #   These values are intended to be used to override any values set
@@ -86,7 +86,7 @@ get_batch_options() {
 	local arguments=("$@")
 
 	command_line_specified_study_folder=""
-	command_line_specified_subj=""
+	command_line_specified_session=""
 	command_line_specified_run_local="FALSE"
 
 	local index=0
@@ -101,8 +101,12 @@ get_batch_options() {
 				command_line_specified_study_folder=${argument#*=}
 				index=$(( index + 1 ))
 				;;
-			--Subject=*)
-				command_line_specified_subj=${argument#*=}
+			--Subject=*)	#legacy field, use 'Session' instead
+				command_line_specified_session=${argument#*=}
+				index=$(( index + 1 ))
+				;;
+			--Session=*)
+				command_line_specified_session=${argument#*=}
 				index=$(( index + 1 ))
 				;;
 			--runlocal)
@@ -126,8 +130,8 @@ main()
 	get_batch_options "$@"
 
 	# Set variable values that locate and specify data to process
-	StudyFolder="${HOME}/projects/Pipelines_ExampleData" # Location of Subject folders (named by subjectID)
-	Subjlist="100307 100610"                             # Space delimited list of subject IDs
+	StudyFolder="${HOME}/projects/Pipelines_ExampleData" # Location of Session folders (named by sessionID)
+	Sessionlist="100307 100610"                             # Space delimited list of session IDs
 
 	# Set variable value that sets up environment
 	EnvironmentScript="${HOME}/projects/Pipelines/Examples/Scripts/SetUpHCPPipeline.sh" # Pipeline environment script
@@ -137,13 +141,13 @@ main()
 		StudyFolder="${command_line_specified_study_folder}"
 	fi
 
-	if [ -n "${command_line_specified_subj}" ]; then
-		Subjlist="${command_line_specified_subj}"
+	if [ -n "${command_line_specified_session}" ]; then
+		Sessionlist="${command_line_specified_session}"
 	fi
 
 	# Report major script control variables to user
 	echo "StudyFolder: ${StudyFolder}"
-	echo "Subjlist: ${Subjlist}"
+	echo "Sessionlist: ${Sessionlist}"
 	echo "EnvironmentScript: ${EnvironmentScript}"
 	echo "Run locally: ${command_line_specified_run_local}"
 
@@ -163,14 +167,14 @@ main()
 	# input names or paths. This batch script assumes the HCP raw data naming
 	# convention, e.g.
 	#
-	# ${StudyFolder}/${Subject}/unprocessed/3T/T1w_MPR1/${Subject}_3T_T1w_MPR1.nii.gz
-	# ${StudyFolder}/${Subject}/unprocessed/3T/T1w_MPR2/${Subject}_3T_T1w_MPR2.nii.gz
+	# ${StudyFolder}/${Session}/unprocessed/3T/T1w_MPR1/${Session}_3T_T1w_MPR1.nii.gz
+	# ${StudyFolder}/${Session}/unprocessed/3T/T1w_MPR2/${Session}_3T_T1w_MPR2.nii.gz
 	#
-	# ${StudyFolder}/${Subject}/unprocessed/3T/T2w_SPC1/${Subject}_3T_T2w_SPC1.nii.gz
-	# ${StudyFolder}/${Subject}/unprocessed/3T/T2w_SPC2/${Subject}_3T_T2w_SPC2.nii.gz
+	# ${StudyFolder}/${Session}/unprocessed/3T/T2w_SPC1/${Session}_3T_T2w_SPC1.nii.gz
+	# ${StudyFolder}/${Session}/unprocessed/3T/T2w_SPC2/${Session}_3T_T2w_SPC2.nii.gz
 	#
-	# ${StudyFolder}/${Subject}/unprocessed/3T/T1w_MPR1/${Subject}_3T_FieldMap_Magnitude.nii.gz
-	# ${StudyFolder}/${Subject}/unprocessed/3T/T1w_MPR1/${Subject}_3T_FieldMap_Phase.nii.gz
+	# ${StudyFolder}/${Session}/unprocessed/3T/T1w_MPR1/${Session}_3T_FieldMap_Magnitude.nii.gz
+	# ${StudyFolder}/${Session}/unprocessed/3T/T1w_MPR1/${Session}_3T_FieldMap_Phase.nii.gz
 
 	# Scan settings:
 	#
@@ -187,7 +191,7 @@ main()
 	# The HCP Pipeline Scripts currently support the use of gradient echo field
 	# maps or spin echo field maps as they are produced by the Siemens Connectom
 	# Scanner. They also support the use of gradient echo field maps as generated
-	# by General Electric scanners.
+	# by GE HealthCare scanners.
 	#
 	# Change either the gradient echo field map or spin echo field map scan
 	# settings to match your data. This script is setup to use gradient echo
@@ -202,9 +206,9 @@ main()
 
 	# DO WORK
 
-	# Cycle through specified subjects
-	for Subject in $Subjlist ; do
-		echo $Subject
+	# Cycle through specified sessions
+	for Session in $Sessionlist ; do
+		echo $Session
 
 		# Input Images
 
@@ -212,23 +216,23 @@ main()
 		# T1w images
 		T1wInputImages=""
 		numT1ws=0
-		for folder in "${StudyFolder}/${Subject}/unprocessed/3T"/T1w_MPR?; do
+		for folder in "${StudyFolder}/${Session}/unprocessed/3T"/T1w_MPR?; do
 			folderbase=$(basename "$folder")
-			T1wInputImages+="$folder/${Subject}_3T_$folderbase.nii.gz@"
+			T1wInputImages+="$folder/${Session}_3T_$folderbase.nii.gz@"
 			numT1ws=$((numT1ws + 1))
 		done
-		echo "Found ${numT1ws} T1w Images for subject ${Subject}"
+		echo "Found ${numT1ws} T1w Images for session ${Session}"
 
 		# Detect Number of T2w Images and build list of full paths to
 		# T2w images
 		T2wInputImages=""
 		numT2ws=0
-		for folder in "${StudyFolder}/${Subject}/unprocessed/3T"/T2w_SPC?; do
+		for folder in "${StudyFolder}/${Session}/unprocessed/3T"/T2w_SPC?; do
 			folderbase=$(basename "$folder")
-			T2wInputImages+="$folder/${Subject}_3T_$folderbase.nii.gz@"
+			T2wInputImages+="$folder/${Session}_3T_$folderbase.nii.gz@"
 			numT2ws=$((numT2ws + 1))
 		done
-		echo "Found ${numT2ws} T2w Images for subject ${Subject}"
+		echo "Found ${numT2ws} T2w Images for session ${Session}"
 
 		# Readout Distortion Correction:
 		#
@@ -252,9 +256,18 @@ main()
 		#     Average any repeats and use Spin Echo Field Maps for readout
 		#     distortion correction
 		#
-		#   "GeneralElectricFieldMap"
-		#     Average any repeats and use General Electric specific Gradient
-		#     Echo Field Map for readout distortion correction
+		#   "GEHealthCareLegacyFieldMap"
+		#     Average any repeats and use GE HeathCare Legacy specific Gradient
+		#     Echo Field Map for readout distortion correction. 
+		#	  The Legacy fieldmap is a two volume file: 1. field map in Hz and 2. magnitude image.
+		# 	  Use "GEB0InputName" variable to specify the 2-Volume file. 
+		#	  Set "DeltaTE" variable to the EchoTime difference (TE2-TE1). 
+		#	 
+		#	"GEHealthCareFieldMap" 
+		#	  Average any repeats and use GE HealthCare specific Gradient Echo
+		#     Field Maps for readout distortion correction
+		#	  This uses two separate NIfTI files for the fieldmap in Hz and the magnitude image
+		#	  Use variables "MagnitudeInputName", "PhaseInputName" and "DeltaTE"
 		#
 		#   "SiemensFieldMap"
 		#     Average any repeats and use Siemens specific Gradient Echo
@@ -263,7 +276,7 @@ main()
 		# Current Setup is for Siemens specific Gradient Echo Field Maps
 		#
 		#   The following settings for AvgrdcSTRING, MagnitudeInputName,
-		#   PhaseInputName, and TE are for using the Siemens specific
+		#   PhaseInputName, and DeltaTE are for using the Siemens specific
 		#   Gradient Echo Field Maps that are collected and used in the
 		#   standard HCP-YA protocol.
 		#
@@ -277,15 +290,15 @@ main()
 
 		# The MagnitudeInputName variable should be set to a 4D magitude volume
 		# with two 3D timepoints or "NONE" if not used
-		MagnitudeInputName="${StudyFolder}/${Subject}/unprocessed/3T/T1w_MPR1/${Subject}_3T_FieldMap_Magnitude.nii.gz"
+		MagnitudeInputName="${StudyFolder}/${Session}/unprocessed/3T/T1w_MPR1/${Session}_3T_FieldMap_Magnitude.nii.gz"
 
 		# The PhaseInputName variable should be set to a 3D phase difference
 		# volume or "NONE" if not used
-		PhaseInputName="${StudyFolder}/${Subject}/unprocessed/3T/T1w_MPR1/${Subject}_3T_FieldMap_Phase.nii.gz"
+		PhaseInputName="${StudyFolder}/${Session}/unprocessed/3T/T1w_MPR1/${Session}_3T_FieldMap_Phase.nii.gz"
 
-		# The TE variable should be set to 2.46ms for 3T scanner, 1.02ms for 7T
-		# scanner or "NONE" if not using
-		TE="2.46"
+		# The DeltaTE (echo time difference) of the fieldmap.  For HCP Young Adult data, this variable would typically be 2.46ms for 3T scans, 1.02ms for 7T
+		# scans, or "NONE" if not using readout distortion correction
+		DeltaTE="2.46"
 
 		# ----------------------------------------------------------------------
 		# Variables related to using Spin Echo Field Maps
@@ -302,8 +315,8 @@ main()
 		# (i.e. if AvgrdcSTRING is not equal to "TOPUP")
 		#
 		# Example values for when using Spin Echo Field Maps from a Siemens machine:
-		#   ${StudyFolder}/${Subject}/unprocessed/3T/T1w_MPR1/${Subject}_3T_SpinEchoFieldMap_LR.nii.gz
-		#   ${StudyFolder}/${Subject}/unprocessed/3T/T1w_MPR1/${Subject}_3T_SpinEchoFieldMap_AP.nii.gz
+		#   ${StudyFolder}/${Session}/unprocessed/3T/T1w_MPR1/${Session}_3T_SpinEchoFieldMap_LR.nii.gz
+		#   ${StudyFolder}/${Session}/unprocessed/3T/T1w_MPR1/${Session}_3T_SpinEchoFieldMap_AP.nii.gz
 		SpinEchoPhaseEncodeNegative="NONE"
 
 		# The SpinEchoPhaseEncodePositive variable should be set to the
@@ -313,8 +326,8 @@ main()
 		# (i.e. if AvgrdcSTRING is not equal to "TOPUP")
 		#
 		# Example values for when using Spin Echo Field Maps from a Siemens machine:
-		#   ${StudyFolder}/${Subject}/unprocessed/3T/T1w_MPR1/${Subject}_3T_SpinEchoFieldMap_RL.nii.gz
-		#   ${StudyFolder}/${Subject}/unprocessed/3T/T1w_MPR1/${Subject}_3T_SpinEchoFieldMap_PA.nii.gz
+		#   ${StudyFolder}/${Session}/unprocessed/3T/T1w_MPR1/${Session}_3T_SpinEchoFieldMap_RL.nii.gz
+		#   ${StudyFolder}/${Session}/unprocessed/3T/T1w_MPR1/${Session}_3T_SpinEchoFieldMap_PA.nii.gz
 		SpinEchoPhaseEncodePositive="NONE"
 
 		# "Effective" Echo Spacing of *Spin Echo Field Maps*. Specified in seconds.
@@ -346,24 +359,50 @@ main()
 		TopupConfig="NONE"
 
 		# ----------------------------------------------------------------------
-		# Variables related to using General Electric specific Gradient Echo
-		# Field Maps
+		# Variables related to using GE HealthCare Legacy specific Gradient Echo
+		# Field Maps (GEHealthCareLegacyFieldMap)
 		# ----------------------------------------------------------------------
 
 		# The following variables would be set to values other than "NONE" for
-		# using General Electric specific Gradient Echo Field Maps (i.e. when
-		# AvgrdcSTRING="GeneralElectricFieldMap")
+		# using GE HealthCare Legacy specific Gradient Echo Field Maps (i.e. when
+		# AvgrdcSTRING="GEHealthCareLegacyFieldMap")
 
-		# Example value for when using General Electric Gradient Echo Field Map
+		# Example value for when using GE HealthCare Legacy Gradient Echo Field Map
 		#
-		# GEB0InputName should be a General Electric style B0 fieldmap with two
+		# GEB0InputName should be a GE HealthCare Legacy style B0 fieldmap with two
 		# volumes
-		#   1) fieldmap in deg and
-		#   2) magnitude,
-		# set to NONE if using TOPUP or FIELDMAP/SiemensFieldMap
-		#
-		#   GEB0InputName="${StudyFolder}/${Subject}/unprocessed/3T/T1w_MPR1/${Subject}_3T_GradientEchoFieldMap.nii.gz"
+		#   1) fieldmap in hertz and
+		#   2) magnitude image,
+		# set to NONE if using TOPUP or FIELDMAP/SiemensFieldMap or GEHealthCareFieldMap
+		#  
+		# For Example:
+		#   GEB0InputName="${StudyFolder}/${Session}/unprocessed/3T/T1w_MPR1/${Session}_3T_GradientEchoFieldMap.nii.gz"
+		#	DeltaTE=2.304 
+		#   Here DeltaTE refers to the DeltaTE in ms
+		#   NOTE: At 3T, the DeltaTE is *usually* 2.304ms for 2D-B0MAP and 2.272ms 3D-B0MAP.
+		#   NOTE: The Delta can be found in json files (if data converted with recent dcm2niix)
+		#   NOTE: Then DeltaTE = (EchoTime2-EchoTime1)*1000
+		#	NOTE: In the DICOM, DeltaTE in ms = round(abs(1e6/( 2*pi*(0019,10E2) )))*1e-3 
 		GEB0InputName="NONE"
+
+		# ---------------------------------------------------------------
+		# Variables related to using GE HealthCare specific Gradient Echo
+		# Field Maps (GEHealthCareFieldMap)
+		# ----------------------------------------------------------------
+
+		# The following variables would be set to values other than "NONE" for
+		# using GE HealthCare specific Gradient Echo Field Maps (i.e. when
+		# AvgrdcSTRING="GEHealthCareFieldMap"). 
+
+		# Example: set MagnitudeInputName to magnitude image, set PhaseInputName 
+		# to the input fieldmap in Hertz and DeltaTE 
+		# (for DeltaTE see NOTE above)
+		#
+		# MagnitudeInputName="${StudyFolder}/${Session}/unprocessed/3T/T1w_MPR1/${Session}_3T_BOMap_Magnitude.nii.gz"
+		# PhaseInputName="${StudyFolder}/${Session}/unprocessed/3T/T1w_MPR1/${Session}_3T_B0Map_fieldmaphz.nii.gz"
+		# DeltaTE="2.272"
+
+		# ---------------------------------------------------------------
 
 		# Templates
 
@@ -447,7 +486,7 @@ main()
 
 		"${queuing_command[@]}" "$HCPPIPEDIR"/PreFreeSurfer/PreFreeSurferPipeline.sh \
 			--path="$StudyFolder" \
-			--subject="$Subject" \
+			--session="$Session" \
 			--t1="$T1wInputImages" \
 			--t2="$T2wInputImages" \
 			--t1template="$T1wTemplate" \
@@ -462,8 +501,8 @@ main()
 			--fnirtconfig="$FNIRTConfig" \
 			--fmapmag="$MagnitudeInputName" \
 			--fmapphase="$PhaseInputName" \
-			--fmapgeneralelectric="$GEB0InputName" \
-			--echodiff="$TE" \
+			--fmapcombined="$GEB0InputName" \
+			--echodiff="$DeltaTE" \
 			--SEPhaseNeg="$SpinEchoPhaseEncodeNegative" \
 			--SEPhasePos="$SpinEchoPhaseEncodePositive" \
 			--seechospacing="$SEEchoSpacing" \

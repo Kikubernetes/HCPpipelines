@@ -230,7 +230,7 @@ if $runVolume ; then
 fi
 
 # Need midthickness GIFTI surfaces
-Filenames="$Filenames ${DownSampleFolder}/${Subject}.L.midthickness.${LowResMesh}k_fs_LR.surf.gii ${DownSampleFolder}/${Subject}.R.midthickness.${LowResMesh}k_fs_LR.surf.gii"
+Filenames="$Filenames ${DownSampleFolder}/${Subject}.L.midthickness${RegString}.${LowResMesh}k_fs_LR.surf.gii ${DownSampleFolder}/${Subject}.R.midthickness${RegString}.${LowResMesh}k_fs_LR.surf.gii"
 
 # Need Atlas_ROIs volume file
 Filenames="$Filenames $ROIsFolder/Atlas_ROIs.${GrayordinatesResolution}.nii.gz"
@@ -403,11 +403,11 @@ if $runDense ; then
 		# total level of smoothing, the additional spatial smoothing added here must be reduced
 		# by the original smoothing applied earlier
 		AdditionalSmoothingFWHM=`echo "sqrt(( $FinalSmoothingFWHM ^ 2 ) - ( $OriginalSmoothingFWHM ^ 2 ))" | bc -l`
-		AdditionalSigma=`echo "$AdditionalSmoothingFWHM / ( 2 * ( sqrt ( 2 * l ( 2 ) ) ) )" | bc -l`
+		AdditionalSigma=`echo "$AdditionalSmoothingFWHM / (2 * sqrt(2 * l(2)))" | bc -l`
 		log_Msg "MAIN: SMOOTH_OR_PARCELLATE: SMOOTH_CIFTI: AdditionalSmoothingFWHM: ${AdditionalSmoothingFWHM}"
 		log_Msg "MAIN: SMOOTH_OR_PARCELLATE: SMOOTH_CIFTI: AdditionalSigma: ${AdditionalSigma}"
 		log_Msg "MAIN: SMOOTH_OR_PARCELLATE: SMOOTH_CIFTI: Applying additional surface smoothing to CIFTI Dense data"
-		${CARET7DIR}/wb_command -cifti-smoothing ${ResultsFolder}/${LevelOnefMRIName}/${LevelOnefMRIName}_Atlas${RegString}${ProcSTRING}.dtseries.nii ${AdditionalSigma} ${AdditionalSigma} COLUMN ${ResultsFolder}/${LevelOnefMRIName}/${LevelOnefMRIName}_Atlas${SmoothingString}${RegString}${ProcSTRING}.dtseries.nii -left-surface ${DownSampleFolder}/${Subject}.L.midthickness.${LowResMesh}k_fs_LR.surf.gii -right-surface ${DownSampleFolder}/${Subject}.R.midthickness.${LowResMesh}k_fs_LR.surf.gii
+		${CARET7DIR}/wb_command -cifti-smoothing ${ResultsFolder}/${LevelOnefMRIName}/${LevelOnefMRIName}_Atlas${RegString}${ProcSTRING}.dtseries.nii ${AdditionalSigma} ${AdditionalSigma} COLUMN ${ResultsFolder}/${LevelOnefMRIName}/${LevelOnefMRIName}_Atlas${SmoothingString}${RegString}${ProcSTRING}.dtseries.nii -left-surface ${DownSampleFolder}/${Subject}.L.midthickness${RegString}.${LowResMesh}k_fs_LR.surf.gii -right-surface ${DownSampleFolder}/${Subject}.R.midthickness${RegString}.${LowResMesh}k_fs_LR.surf.gii
 	else
 		if [ "$FinalSmoothingFWHM" -eq "$OriginalSmoothingFWHM" ]; then
 			log_Msg "MAIN: SMOOTH_OR_PARCELLATE: SMOOTH_CIFTI: No additional surface smoothing requested for CIFTI Dense data"
@@ -431,7 +431,7 @@ if $runVolume ; then
 
 	#Add edge-constrained volume smoothing
 	log_Msg "MAIN: SMOOTH_OR_PARCELLATE: SMOOTH_NIFTI: Add edge-constrained volume smoothing"
-	FinalSmoothingSigma=`echo "$FinalSmoothingFWHM / ( 2 * ( sqrt ( 2 * l ( 2 ) ) ) )" | bc -l`
+	FinalSmoothingSigma=`echo "$FinalSmoothingFWHM / (2 * sqrt(2 * l(2)))" | bc -l`
 	InputfMRI=${ResultsFolder}/${LevelOnefMRIName}/${LevelOnefMRIName}${ProcSTRING}
 	InputSBRef=${ResultsFolder}/${LevelOnefMRIName}/${LevelOnefMRIName}_SBRef
 	fslmaths ${InputSBRef} -bin ${FEATDir}/mask_orig
@@ -578,11 +578,11 @@ if $runDense ; then
 	for Hemisphere in L R ; do
 		#Prepare for film_gls  
 		log_Msg "MAIN: RUN_GLM: Prepare for film_gls"
-		${CARET7DIR}/wb_command -metric-dilate ${FEATDir}/${LevelOnefMRIName}${TemporalFilterString}${SmoothingString}${RegString}${ProcSTRING}${LowPassSTRING}.atlasroi.${Hemisphere}.${LowResMesh}k_fs_LR.func.gii ${DownSampleFolder}/${Subject}.${Hemisphere}.midthickness.${LowResMesh}k_fs_LR.surf.gii 50 ${FEATDir}/${LevelOnefMRIName}${TemporalFilterString}${SmoothingString}${RegString}${ProcSTRING}${LowPassSTRING}.atlasroi_dil.${Hemisphere}.${LowResMesh}k_fs_LR.func.gii -nearest
+		${CARET7DIR}/wb_command -metric-dilate ${FEATDir}/${LevelOnefMRIName}${TemporalFilterString}${SmoothingString}${RegString}${ProcSTRING}${LowPassSTRING}.atlasroi.${Hemisphere}.${LowResMesh}k_fs_LR.func.gii ${DownSampleFolder}/${Subject}.${Hemisphere}.midthickness${RegString}.${LowResMesh}k_fs_LR.surf.gii 50 ${FEATDir}/${LevelOnefMRIName}${TemporalFilterString}${SmoothingString}${RegString}${ProcSTRING}${LowPassSTRING}.atlasroi_dil.${Hemisphere}.${LowResMesh}k_fs_LR.func.gii -nearest
 
 		#Run film_gls on surface data
 		log_Msg "MAIN: RUN_GLM: Run film_gls on surface data"
-		film_gls --rn=${FEATDir}/${Hemisphere}_SurfaceStats --sa --ms=15 --epith=5 --in2=${DownSampleFolder}/${Subject}.${Hemisphere}.midthickness.${LowResMesh}k_fs_LR.surf.gii --in=${FEATDir}/${LevelOnefMRIName}${TemporalFilterString}${SmoothingString}${RegString}${ProcSTRING}${LowPassSTRING}.atlasroi_dil.${Hemisphere}.${LowResMesh}k_fs_LR.func.gii --pd=${DesignMatrix} --con=${DesignContrasts} ${ExtraArgs} --mode=surface
+		film_gls --rn=${FEATDir}/${Hemisphere}_SurfaceStats --sa --ms=15 --epith=5 --in2=${DownSampleFolder}/${Subject}.${Hemisphere}.midthickness${RegString}.${LowResMesh}k_fs_LR.surf.gii --in=${FEATDir}/${LevelOnefMRIName}${TemporalFilterString}${SmoothingString}${RegString}${ProcSTRING}${LowPassSTRING}.atlasroi_dil.${Hemisphere}.${LowResMesh}k_fs_LR.func.gii --pd=${DesignMatrix} --con=${DesignContrasts} ${ExtraArgs} --mode=surface
 		rm ${FEATDir}/${LevelOnefMRIName}${TemporalFilterString}${SmoothingString}${RegString}${ProcSTRING}${LowPassSTRING}.atlasroi_dil.${Hemisphere}.${LowResMesh}k_fs_LR.func.gii ${FEATDir}/${LevelOnefMRIName}${TemporalFilterString}${SmoothingString}${RegString}${ProcSTRING}${LowPassSTRING}.atlasroi.${Hemisphere}.${LowResMesh}k_fs_LR.func.gii
 	done
 
@@ -634,13 +634,16 @@ if $runVolume ; then
 	rm -f ${SmoothedDilatedResultFile}*.nii.gz
 fi
 
+#make an unmatched * expression become "no arguments" instead of something nonexistent
+shopt -s nullglob
+
 # Clean up contrasts where cope has no non-zero voxels (created from 'versus rest' contrasts from conditions with empty EVs)
 # NOTE WELL: This will not remove 'condition A versus condition B' contrasts where one condition has no events.
 for Analysis in GrayordinatesStats ParcellatedStats StandardVolumeStats; do
-	for file in $( ls ${FEATDir}/${Analysis}/cope*.nii* 2>/dev/null ); do 
-		filebase=$( basename $file )
-		sd=$( fslstats $file -V | awk '{ print $1 }' )
-		if [ $sd == 0 ]; then 
+	for file in "$FEATDir"/"$Analysis"/cope*.nii*; do
+		filebase=$( basename "$file" )
+		sd=$( fslstats "$file" -V | awk '{ print $1 }' )
+		if [[ "$sd" == 0 ]]; then 
 			log_Msg "CLEANUP $filebase has 0 non-zero voxels. Removing all associated files."
 			prefixes=( cope pe tstat varcope zstat )
 			for pre in "${prefixes[@]}"; do 

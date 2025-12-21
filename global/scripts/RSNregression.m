@@ -1,5 +1,5 @@
 function RSNregression(InputFile, InputVNFile, Method, ParamsFile, OutputBeta, varargin)
-    optional = myargparse(varargin, {'GroupMaps' 'VAWeightsName' 'VolInputFile' 'VolInputVNFile' 'VolCiftiTemplate' 'OldBias' 'OldVolBias' 'GoodBCFile' 'VolGoodBCFile' 'SpectraParams' 'OutputZ' 'OutputVolBeta' 'OutputVolZ' 'SurfString' 'ScaleFactor' 'WRSmoothingSigma'});
+    optional = myargparse(varargin, {'GroupMaps' 'tICAMM' 'VAWeightsName' 'VolInputFile' 'VolInputVNFile' 'VolCiftiTemplate' 'OldBias' 'OldVolBias' 'GoodBCFile' 'VolGoodBCFile' 'SpectraParams' 'OutputZ' 'OutputZMM' 'OutputVolBeta' 'OutputVolZ' 'OutputVolZMM' 'SurfString' 'ScaleFactor' 'WRSmoothingSigma' 'WF'});
     
     %InputFile - text file containing filenames of timeseries to concatenate
     %InputVNFile - text file containing filenames of the variance maps of each input
@@ -19,11 +19,14 @@ function RSNregression(InputFile, InputVNFile, Method, ParamsFile, OutputBeta, v
     %VolGoodBCFile - same as GoodBCFile, but volume data
     %SpectraParams - string, <num>@<tsfile>@<spectrafile> - number of samples, and output filenames for spectra analysis
     %OutputZ - filename for output of (approximate) Z stat maps
+    %OutputZMM - filename for output of mixture model corrected Z stat maps
     %OutputVolBeta - same as OutputBeta, but volume data
     %OutputVolZ - same as OutputZ, but volume data
+    %OutputVolZMM - same as OutputZMM, but volume data    
     %SurfString - string, <leftsurf>@<rightsurf>, surfaces to use in weighted method for smoothing the alignment quality map
     %ScaleFactor - string representation of a number, multiply the input data by this factor before processing (to convert grand mean 10,000 data to % bold, use 0.01)
     %WRSmoothingSigma - string representation of a number, when using 'weighted' method, smooth the alignment quality map with this sigma (default 14, tuned for human data)
+    %WF - number of Wishart Distributions for Wishart Filtering, set to zero to turn off (default)
     
     %if isdeployed()
         %all arguments are strings
@@ -31,6 +34,11 @@ function RSNregression(InputFile, InputVNFile, Method, ParamsFile, OutputBeta, v
     
     wbcommand = 'wb_command';
     ScaleFactor = 1;
+    WF = 0;
+    
+    if ~strcmp(optional.WF, '')
+        WF = str2double(optional.WF);
+    end    
     
     if ~strcmp(optional.ScaleFactor, '')
         ScaleFactor = str2double(optional.ScaleFactor);
@@ -139,13 +147,13 @@ function RSNregression(InputFile, InputVNFile, Method, ParamsFile, OutputBeta, v
         clear vnvolsum;
     end
     
-    if strcmp(Method,'weighted') || strcmp(Method,'dual')
+    if strcmp(Method,'weighted') || strcmp(Method,'dual') || strcmp(Method,'tICA_weighted') 
         GroupMapcii = ciftiopen(optional.GroupMaps, wbcommand);
         weightscii = ciftiopen(optional.VAWeightsName, wbcommand); %normalized vertex areas, voxels are all 1s
         AreaWeights = weightscii.cdata;
     end
     switch Method
-        case 'weighted'
+        case {'weighted', 'tICA_weighted'}
             if strcmp(optional.WRSmoothingSigma, '')
                 error '"weighted" method requires WRSmoothingSigma to be specified'
             end
@@ -159,8 +167,10 @@ function RSNregression(InputFile, InputVNFile, Method, ParamsFile, OutputBeta, v
             for i = 1:length(paramsArray)
                 LowDim = paramsArray{i};
                 LowDim = ciftiopen(LowDim, wbcommand);
-                betaICAone = weightedDualRegression(LowDim.cdata, inputConcat, AreaWeights);
-                betaICA = weightedDualRegression(betaICAone, inputConcat, AreaWeights);
+                %betaICAone = weightedDualRegression(LowDim.cdata, inputConcat, AreaWeights); 
+                %betaICA = weightedDualRegression(betaICAone, inputConcat, AreaWeights); 
+                betaICAone = weightedDualRegression(LowDim.cdata, inputConcat, AreaWeights, 0); %Always use WF=0
+                betaICA = weightedDualRegression(betaICAone, inputConcat, AreaWeights, 0); %Always use WF=0
                 for j = 1:length(betaICA)
                     var(j) = atanh(corr(betaICA(j, :)', LowDim.cdata(j, :)')); %#ok<AGROW>
                 end
@@ -176,25 +186,76 @@ function RSNregression(InputFile, InputVNFile, Method, ParamsFile, OutputBeta, v
             AlignmentQuality = repmat(MEAN, length(outTemplate.cdata), 1) + outTemplate.cdata - AlignmentQualitySmoothcii.cdata;
             ScaledAlignmentQuality = (AlignmentQuality .* (AlignmentQuality > 0)) .^ 3;
             
-            betaICAone = weightedDualRegression(GroupMapcii.cdata, inputConcat, AreaWeights .* ScaledAlignmentQuality);
-            [betaICA, NODEts] = weightedDualRegression(normalise(betaICAone), inputConcat, AreaWeights);
+            %betaICAone = weightedDualRegression(GroupMapcii.cdata, inputConcat, AreaWeights .* ScaledAlignmentQuality);
+            %[betaICA, NODEts] = weightedDualRegression(normalise(betaICAone), inputConcat, AreaWeights);
+            betaICAone = weightedDualRegression(GroupMapcii.cdata, inputConcat, AreaWeights .* ScaledAlignmentQuality, 0); %Always use WF=0
+            [betaICA, NODEts, inputConcat, DOF] = weightedDualRegression(normalise(betaICAone), inputConcat, AreaWeights, WF); %WF if requested only for the last spatial regression to avoid error propogation
+            
+            if strcmp(Method, "tICA_weighted") % based on tICA/scripts/ComputeGroupTICA.m but for one subject as a group
+                NODEts=NODEts';
+                thisStart = 1;
+                TCSRunVarSub = [];
+                for i = 1:size(inputArray, 1)
+                    dtseriesName=[inputArray{i}];
+                    if exist(dtseriesName, 'file')
+                        runLengthStr = my_system(['wb_command -file-information -only-number-of-maps ' dtseriesName]);
+                        disp(['runLengthStr ' runLengthStr])
+                        runLength = str2double(runLengthStr);
+                        nextStart = thisStart + runLength;
+                        TCSRunVarSub = [TCSRunVarSub repmat(std(NODEts(:, thisStart:(nextStart - 1)), [], 2), 1, runLength)];
+    
+                        thisStart = nextStart;
+                    end
+                end
+                
+                sICAtcsvars = std(NODEts, [], 2);
+                NODEts = (NODEts ./ TCSRunVarSub) .* repmat(sICAtcsvars, 1, size(TCSRunVarSub, 2)); %Making all runs contribute equally improves tICA decompositions
+                NODEts(~isfinite(NODEts)) = 0;
+
+                A = load(optional.tICAMM,'-ascii');
+
+                if size(A,1) ~= size(NODEts,1)
+                    error('Mixing matrix to be used does not match dimensions of the sICA components');
+                end
+                
+                % unmix the sICA timeseries
+                W = pinv(A);
+                normicasig = W * NODEts;
+                
+                % normicasig has stdev = 1 (more or less), just like the fastica/icasso output, we want to multiply the (approximate) amplitudes from A into it
+                % but, we also want to pretend that the input to tICA was normalized, so:
+                % tICAinput = A * normicasig
+                % pretendtICAinput = diag(1 / std(tICAinput)) * A * normicasig
+                % ...assume normicasig doesn't change...
+                % pretendA = diag(1 / std(tICAinput)) * A = A ./ repmat(std(tICAinput), ...)
+                % then use std() to extract the approximate amplitudes from pretendA...sqrt(mean(x .^ 2)) might be better, but this was how we did it in tICA, so...
+                icasig = normicasig .* repmat(std(A ./ repmat(sICAtcsvars, 1, size(A, 2)))', 1, size(NODEts, 2)); %Un-normalize the icasig assuming sICAtcs with std = 1 (approximately undo the original variance normalization)
+
+                tICAtcs = single(icasig);
+                % single regression
+                NODEts = tICAtcs';
+                %betaICA = ((pinv(normalise(NODEts)) * demean(inputConcat')))';
+                [betaICA, inputConcat, DOF] = temporalRegression(inputConcat,NODEts,WF);
+            end
         case 'dual'
-            [betaICA, NODEts] = weightedDualRegression(GroupMapcii.cdata, inputConcat, AreaWeights);
+            %[betaICA, NODEts] = weightedDualRegression(GroupMapcii.cdata, inputConcat, AreaWeights);
+            [betaICA, NODEts, inputConcat, DOF] = weightedDualRegression(GroupMapcii.cdata, inputConcat, AreaWeights, WF);
         case 'single'
             SpectraArray = textscan(optional.SpectraParams, '%s', 'Delimiter', {'@'});
             InputSpectraTS = SpectraArray{1}{1};
             NODEts=ciftiopen(InputSpectraTS, wbcommand);
             NODEts=NODEts.cdata';
-            betaICA = ((pinv(normalise(NODEts)) * demean(inputConcat')))';
+            %betaICA = ((pinv(normalise(NODEts)) * demean(inputConcat')))';
+            [betaICA, inputConcat, DOF] = temporalRegression(inputConcat,NODEts,WF);
         otherwise
-            error(['unrecognized method: "' Method '", use "weighted", "dual", or "single"']);
+            error(['unrecognized method: "' Method '", use "weighted", "tICA_weighted", "dual", or "single"']);
     end
     
     NODEtsnorm = normalise(NODEts);
     
     %outputs
     %Save Timeseries and Spectra if Desired
-    if ~strcmp(optional.SpectraParams, '') && ~strcmp(Method,'single')
+    if ~strcmp(optional.SpectraParams, '') && ~strcmp(Method,'single') && ~strcmp(Method,'tICA_weighted')
         SpectraArray = textscan(optional.SpectraParams, '%s', 'Delimiter', {'@'});
         nTPsForSpectra = min(str2double(SpectraArray{1}{1}), size(NODEts, 1));
         OutputSpectraTS = SpectraArray{1}{2};
@@ -229,36 +290,62 @@ function RSNregression(InputFile, InputVNFile, Method, ParamsFile, OutputBeta, v
     %Z stat
     if ~strcmp(optional.OutputZ, '')
         %Convert to Z stat image
-        dof = size(NODEtsnorm, 1) - size(NODEtsnorm, 2) - 1;
+        if WF>0
+            dof = DOF - size(NODEtsnorm, 2) - 1; %Approximate compensation for Wishart Filtering--Mixture modelling is more correct, but more complicated
+        else
+            dof = size(NODEtsnorm, 1) - size(NODEtsnorm, 2) - 1; %Approximate, does not include DOF lost from data cleanup
+        end
         residuals = demean(inputConcat, 2) - betaICA * NODEtsnorm';
         pN = pinv(NODEtsnorm); dpN = diag(pN * pN')';
         t = double(betaICA ./ sqrt(sum(residuals .^ 2, 2) * dpN / dof));
         Z = zeros(size(t));
-        Z(t > 0) = min(-norminv(tcdf(-t(t > 0), dof)), 38.5);
-        Z(t < 0) = max(norminv(tcdf(t(t < 0), dof)), -38.5);
+        %Z(t > 0) = min(-norminv(tcdf(-t(t > 0), dof)), 38.5); %Exact p-value based method for t to z, but cannot handle values below matlab realmin (minimum accurate value of double)
+        %Z(t < 0) = max(norminv(tcdf(t(t < 0), dof)), -38.5); %Exact p-value based method for t to z, but cannot handle values below matlab realmin (minimum accurate value of double)
+        Z=((dof+0.125)./(dof+1.125)) .* sqrt((dof+19/12).*log(1+(t./(dof+1./12).*t))) .* sign(t); %Bailey's transformation of t to z (https://rdrr.io/bioc/limma/man/zscoreT.html), which works for large values 
         Z(isnan(Z)) = 0;
         outTemplate.cdata = Z;
         ciftisavereset(outTemplate, optional.OutputZ, wbcommand);
+        % mixtureModel(optional.OutputZ,optional.OutputZMM);
+        if ~strcmp(optional.OutputZMM, '')
+            my_system(['''' getenv('HCPPIPEDIR') '''/global/scripts/mixtureModel.sh --input='''  optional.OutputZ ''' --output=''' optional.OutputZMM '''']);
+        end
     end
     
     %volume outputs
     if doVol
-        VolbetaICA = ((pinv(NODEtsnorm) * demean(volInputConcat')))';
+        %VolbetaICA = ((pinv(NODEtsnorm) * demean(volInputConcat')))';
+        if WF == 0
+          volWF=0;
+        elseif WF == 1
+          volWF=1
+        elseif WF>1
+          volWF=1; %Reduce volWF to 1
+        end
+        [VolbetaICA, volInputConcat, DOF] = temporalRegression(volInputConcat,NODEtsnorm,volWF); 
         if ~strcmp(optional.OutputVolBeta, '')
             %multiply by vn to get back to BC
             outVolTemplate.cdata = VolbetaICA .* repmat(vnvolmean, 1, size(VolbetaICA, 2));
             ciftisavereset(outVolTemplate, optional.OutputVolBeta, wbcommand);
         end
         if ~strcmp(optional.OutputVolZ, '')
-            dof = size(NODEtsnorm, 1) - size(NODEtsnorm, 2) - 1;
+            if WF>0
+                dof = DOF - size(NODEtsnorm, 2) - 1; %Approximate compensation for Wishart Filtering--Mixture modelling is more correct, but more complicated
+            else
+                dof = size(NODEtsnorm, 1) - size(NODEtsnorm, 2) - 1; %Approximate, does not include DOF lost from data cleanup
+            end
             residuals = demean(volInputConcat, 2) - VolbetaICA * NODEtsnorm';
             t = double(VolbetaICA ./ sqrt(sum(residuals .^ 2, 2) * dpN / dof));
             Z = zeros(size(t));
-            Z(t > 0) = min(-norminv(tcdf(-t(t > 0), dof)), 38.5);
-            Z(t < 0) = max(norminv(tcdf(t(t < 0), dof)), -38.5);
+            %Z(t > 0) = min(-norminv(tcdf(-t(t > 0), dof)), 38.5); %Exact p-value based method for t to z, but cannot handle values below matlab realmin (minimum accurate value of double)
+            %Z(t < 0) = max(norminv(tcdf(t(t < 0), dof)), -38.5); %Exact p-value based method for t to z, but cannot handle values below matlab realmin (minimum accurate value of double)
+            Z=((dof+0.125)./(dof+1.125)) .* sqrt((dof+19/12).*log(1+(t./(dof+1./12).*t))) .* sign(t); %Bailey's transformation of t to z (https://rdrr.io/bioc/limma/man/zscoreT.html), which works for large values 
             Z(isnan(Z)) = 0;
             outVolTemplate.cdata = Z;
             ciftisavereset(outVolTemplate, optional.OutputVolZ, wbcommand);
+            % mixtureModel(optional.OutputVolZ,optional.OutputVolZMM);
+            if ~strcmp(optional.OutputVolZMM, '')
+                my_system(['''' getenv('HCPPIPEDIR') '''/global/scripts/mixtureModel.sh --input='''  optional.OutputVolZ ''' --output=''' optional.OutputVolZMM '''']);
+            end
         end
     end
 end
@@ -286,11 +373,25 @@ function lines = myreadtext(filename)
     lines = array{1};
 end
 
-function [betaMaps, mapTimeseries] = weightedDualRegression(SpatialMaps, Timeseries, Weights)
+%function [betaMaps, mapTimeseries] = weightedDualRegression(SpatialMaps, Timeseries, Weights)
+function [betaMaps, mapTimeseries, OutDenseTimeseries, DOF] = weightedDualRegression(SpatialMaps, Timeseries, Weights,WF)
     DesignWeights = repmat(sqrt(Weights), 1, size(SpatialMaps, 2));
     DenseWeights = repmat(sqrt(Weights), 1, size(Timeseries, 2));
     mapTimeseries = demean((pinv(demean(SpatialMaps .* DesignWeights)) * (demean(Timeseries .* DenseWeights)))');
-    betaMaps = ((pinv(normalise(mapTimeseries)) * demean(Timeseries')))';
+    %betaMaps = ((pinv(normalise(mapTimeseries)) * demean(Timeseries')))';
+    [betaMaps, OutDenseTimeseries, DOF] = temporalRegression(Timeseries,mapTimeseries,WF);
+end
+
+function [betaMaps, OutDenseTimeseries, DOF] = temporalRegression(DenseTimeseries,DesignTimeseries,WF)
+    if WF>0
+        Out=icaDim(DenseTimeseries,0,1,-1,WF); %demean only
+        OutDenseTimeseries=Out.data;
+        DOF=Out.NewDOF;
+    else
+        OutDenseTimeseries=DenseTimeseries;
+        DOF=0; %This is junk so we can always set this output variable sometimes
+    end
+    betaMaps = ((pinv(normalise(DesignTimeseries)) * demean(OutDenseTimeseries')))';
 end
 
 function outstruct = open_vol_as_cifti(volName, ciftiTemplate, wbcommand)
@@ -305,7 +406,7 @@ function outstruct = open_vol_as_cifti(volName, ciftiTemplate, wbcommand)
 end
 
 %like call_fsl, but without sourcing fslconf
-function my_system(command)
+function stdout=my_system(command)
     if ismac()
         ldsave = getenv('DYLD_LIBRARY_PATH');
     else
@@ -325,7 +426,10 @@ function my_system(command)
     else
         setenv('LD_LIBRARY_PATH');
     end
-    if system(command) ~= 0
+
+    [exitStatus, stdout] = system(command);
+
+    if exitStatus ~= 0
         error(['command failed: ' command]);
     end
 end

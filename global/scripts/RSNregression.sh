@@ -41,6 +41,8 @@ opts_AddMandatory '--method' 'Method' 'regression method' "'weighted', 'dual', o
 opts_AddOptional '--weighted-smoothing-sigma' 'WRSmoothingSigma' 'number' "default 14 for human data - when using --method=weighted, the smoothing sigma, in mm, to apply to the 'alignment quality' weighting map" '14'
 opts_AddOptional '--low-ica-dims' 'LowICADims' 'num@num@num...' "when using --method=weighted, the low ICA dimensionality files to use for determining weighting"
 opts_AddOptional '--low-ica-template-name' 'ICATemplateName' 'filename' "filename template where 'REPLACEDIM' will be replaced by each of the --low-ica-dims values in turn to form the low-dim inputs"
+opts_AddOptional '--tICA-mixing-matrix' 'tICAMM' 'filename' "path to a previously computed tICA mixing matrix with matching sICA components"
+
 #outputs
 opts_AddMandatory '--output-string' 'OutString' 'name' "filename part to describe the outputs, like group_ICA_d127"
 opts_AddOptional '--output-spectra' 'nTPsForSpectra' 'number' "number of samples to use when computing frequency spectrum" '0'
@@ -50,6 +52,7 @@ opts_AddOptional '--output-z' 'DoZString' 'YES or NO' "also create Z maps from t
 #old bias field
 opts_AddOptional '--fix-legacy-bias' 'DoFixBiasString' 'YES or NO' "use YES if you are using HCP YA data (because it used an older bias field computation)" 'NO'
 opts_AddOptional '--scale-factor' 'ScaleFactor' 'number' "multiply the input timeseries by some factor before processing"
+opts_AddOptional '--wf' 'WF' 'number' "number of Wishart Distributions for Wishart Filtering, set to zero to turn off (default)"
 opts_AddOptional '--matlab-run-mode' 'MatlabMode' '0, 1, or 2' "defaults to $g_matlab_default_mode
 0 = compiled MATLAB
 1 = interpreted MATLAB
@@ -158,6 +161,19 @@ case "$Method" in
             echo "$ICATemplateName" | sed "s/REPLACEDIM/$dim/g" >> "$tempname.params.txt"
         done
         ;;
+    (tICA_weighted)
+        MethodStr="TWR"
+        if [[ "$LowICADims" == "" || "$ICATemplateName" == "" || "$tICAMM" == "" ]]
+        then
+            log_Err_Abort "When using 'tICA_weighted' method, you must use --low-ica-dims, --low-ica-template-name and --tICA-mixing-matrix"
+        fi
+        IFS='@' read -a LowDimArray <<< "$LowICADims"
+        for dim in "${LowDimArray[@]}"
+        do
+            #yes, quotes can nest when there is a $() separating them
+            echo "$ICATemplateName" | sed "s/REPLACEDIM/$dim/g" >> "$tempname.params.txt"
+        done
+        ;;
     (dual)
         MethodStr="DR"
         ;;
@@ -173,21 +189,33 @@ case "$Method" in
         ;;
 esac
 
-OutBeta="$DownSampleMNIFolder/${Subject}.${OutString}_${MethodStr}${RegString}.${LowResMesh}k_fs_LR.dscalar.nii"
+if [ "$WF" = "0" ] ; then
+  WF=""
+fi
+
+if [[ "$WF" != "" ]] ; then
+  WFstr="WF${WF}"
+else
+  WFstr=""
+fi
+
+OutBeta="$DownSampleMNIFolder/${Subject}.${OutString}_${MethodStr}${WFstr}${RegString}.${LowResMesh}k_fs_LR.dscalar.nii"
 OutputVolBeta=""
 if ((DoVol))
 then
     #no reason for it to have the mesh on the name, but that is what the old script said...
-    OutputVolBeta="$DownSampleMNIFolder/${Subject}.${OutString}_${MethodStr}${RegString}_vol.${LowResMesh}k_fs_LR.dscalar.nii"
+    OutputVolBeta="$DownSampleMNIFolder/${Subject}.${OutString}_${MethodStr}${WFstr}${RegString}_vol.${LowResMesh}k_fs_LR.dscalar.nii"
 fi
 OutputZ=""
 OutputVolZ=""
 if ((DoZ))
 then
-    OutputZ="$DownSampleMNIFolder/${Subject}.${OutString}_${MethodStr}Z${RegString}.${LowResMesh}k_fs_LR.dscalar.nii"
+    OutputZ="$DownSampleMNIFolder/${Subject}.${OutString}_${MethodStr}${WFstr}Z${RegString}.${LowResMesh}k_fs_LR.dscalar.nii"
+    OutputZMM="$DownSampleMNIFolder/${Subject}.${OutString}_${MethodStr}${WFstr}ZMM${RegString}.${LowResMesh}k_fs_LR.dscalar.nii"
     if ((DoVol))
     then
-        OutputVolZ="$DownSampleMNIFolder/${Subject}.${OutString}_${MethodStr}Z${RegString}_vol.${LowResMesh}k_fs_LR.dscalar.nii"
+        OutputVolZ="$DownSampleMNIFolder/${Subject}.${OutString}_${MethodStr}${WFstr}Z${RegString}_vol.${LowResMesh}k_fs_LR.dscalar.nii"
+        OutputVolZMM="$DownSampleMNIFolder/${Subject}.${OutString}_${MethodStr}${WFstr}ZMM${RegString}_vol.${LowResMesh}k_fs_LR.dscalar.nii"
     fi
 fi
 SpectraParams=""
@@ -225,9 +253,17 @@ then
     matlab_argarray+=("GroupMaps" "$GroupMaps")
     matlab_argarray+=("VAWeightsName" "$tempfile.91k.dscalar.nii")
 fi
+if [[ "$Method" == "tICA_weighted" ]]
+then
+    matlab_argarray+=("tICAMM" "$tICAMM")
+fi
 if ((DoZ))
 then
     matlab_argarray+=("OutputZ" "$OutputZ")
+fi
+if ((DoZ))
+then
+    matlab_argarray+=("OutputZMM" "$OutputZMM")
 fi
 if [[ "$SpectraParams" != "" ]]
 then
@@ -241,12 +277,20 @@ if [[ "$ScaleFactor" != "" ]]
 then
     matlab_argarray+=("ScaleFactor" "$ScaleFactor")
 fi
+if [[ "$WF" != "" ]]
+then
+    matlab_argarray+=("WF" "$WF")
+fi
 if ((DoVol))
 then
     matlab_argarray+=("VolCiftiTemplate" "$VolCiftiTemplate" "VolInputFile" "$tempname.volinput.txt" "VolInputVNFile" "$tempname.volinputvn.txt" "OutputVolBeta" "$OutputVolBeta")
     if ((DoZ))
     then
         matlab_argarray+=("OutputVolZ" "$OutputVolZ")
+    fi
+    if ((DoZ))
+    then
+        matlab_argarray+=("OutputVolZMM" "$OutputVolZMM")
     fi
     if ((DoFixBias))
     then
@@ -287,7 +331,7 @@ case "$MatlabMode" in
         ;;
 esac
 
-if [[ "$SpectraParams" != "" ]] && [[ ! ${Method} == "single" ]]
+if [[ "$SpectraParams" != "" ]] && [[ ! ${Method} == "single" ]] && [[ ! ${Method} == "tICA_weighted" ]]
 then
     wb_command -file-information "$GroupMaps" -only-map-names > "$tempname.mapnames.txt"
     TR=$(wb_command -file-information "$SpectraTRFile" -only-step-interval)

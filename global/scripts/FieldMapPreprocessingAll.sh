@@ -9,88 +9,78 @@
 # -----------------------------------------------------------------------------------
 
 SIEMENS_METHOD_OPT="SiemensFieldMap"
-GENERAL_ELECTRIC_METHOD_OPT="GeneralElectricFieldMap"
+
+GE_HEALTHCARE_LEGACY_METHOD_OPT="GEHealthCareLegacyFieldMap"
+# "GEHealthCareLegacyFieldMap" refers to fieldmap in the form of a single NIfTI file 
+# with 2 volumes in it (volume-1: the Fieldmap in Hertz; volume-2: the magnitude image). 
+# Note: dcm2niix (pre-v1.0.20210410) used to convert the GEHC B0Maps in this format (a single NIFTI file with 2 volumes). 
+
+GE_HEALTHCARE_METHOD_OPT="GEHealthCareFieldMap"
+# "GEHealthCareFieldMap" refers to fieldmap in the form of 2 separate NIfTI files.
+# One file with the Fieldmap in Hz and another file with the magnitude image). 
+# Note: dcm2niix (v1.0.20210410 and later) convert the GEHC B0Maps as 2 separate NIFTI files
+# using the suffix '_fieldmaphz' for the fieldmap in Hz and no suffix for the magnitude image. 
+
 PHILIPS_METHOD_OPT="PhilipsFieldMap"
 
-# ------------------------------------------------------------------------------
-#  Verify required environment variables are set
-# ------------------------------------------------------------------------------
+set -eu
 
-if [ -z "${HCPPIPEDIR}" ]; then
-    echo "$(basename ${0}): ABORTING: HCPPIPEDIR environment variable must be set"
-    exit 1
-else
-    echo "$(basename ${0}): HCPPIPEDIR: ${HCPPIPEDIR}"
+pipedirguessed=0
+if [[ "${HCPPIPEDIR:-}" == "" ]]
+then
+    pipedirguessed=1
+    export HCPPIPEDIR="$(dirname -- "$0")/../.."
 fi
 
-if [ -z "${FSLDIR}" ]; then
-    echo "$(basename ${0}): ABORTING: FSLDIR environment variable must be set"
-    exit 1
-else
-    echo "$(basename ${0}): FSLDIR: ${FSLDIR}"
+# Load function libraries
+source "${HCPPIPEDIR}/global/scripts/debug.shlib" "$@"         # Debugging functions; also sources log.shlib
+source "$HCPPIPEDIR/global/scripts/newopts.shlib" "$@"
+source "$HCPPIPEDIR/global/scripts/tempfiles.shlib" "$@"
+source "$HCPPIPEDIR/global/scripts/fsl_version.shlib"          # FSL-version checks functions
+
+opts_SetScriptDescription "Script for generating a fieldmap suitable for FSL from a dual-echo Gradient Echo field map acquisition, and also do gradient non-linearity distortion correction of these"
+
+opts_AddMandatory '--method' 'DistortionCorrection' 'method' "method to use for susceptibility distortion correction (SDC)
+        '${SIEMENS_METHOD_OPT}'
+             use Siemens specific Gradient Echo Field Maps for SDC
+        '${GE_HEALTHCARE_LEGACY_METHOD_OPT}'
+             use GE HealthCare Legacy specific Gradient Echo Field Maps for SDC (field map in Hz and magnitude image in a single NIfTI file, via --fmapcombined argument).
+        '${GE_HEALTHCARE_METHOD_OPT}'
+             use GE HealthCare specific Gradient Echo Field Maps for SDC (field map in Hz and magnitude image in two separate NIfTI files).
+        '${PHILIPS_METHOD_OPT}'
+             use Philips specific Gradient Echo Field Maps for SDC"
+
+opts_AddMandatory '--ofmapmag' 'MagnitudeOutput' 'image' "output distortion corrected fieldmap magnitude image"
+
+opts_AddMandatory '--ofmapmagbrain' 'MagnitudeBrainOutput' 'image' "output distortion-corrected brain-extracted fieldmap magnitude image"
+
+opts_AddMandatory '--ofmap' 'FieldMapOutput' 'image' "output distortion corrected fieldmap image (rad/s)"
+
+# options --echodiff is now mandatory; used by all "--method" options (and necessary for processing of all vendors). 
+opts_AddMandatory '--echodiff' 'DeltaTE' 'number (milliseconds)' "echo time difference for fieldmap images (in milliseconds)"
+
+# Optional Arguments
+opts_AddOptional '--fmapcombined' 'GEB0InputName' 'image (Hz and magnitude)' "GE HealthCare Legacy fieldmap with field map in Hz and magnitude image included as two volumes in a single file" '' '--fmap'
+
+opts_AddOptional '--fmapphase' 'PhaseInputName' 'image (radians or Hz)' "phase image in radians for Siemens/Philips fieldmap and in Hertz for GE HealthCare fieldmap"
+
+opts_AddOptional '--fmapmag' 'MagnitudeInputName' 'image' "Siemens/Philips/GE HealthCare fieldmap magnitude image; multiple volumes (i.e., magnitude images from both echoes) are allowed, multiple files must be separated with @"
+
+opts_AddOptional '--workingdir' 'WD' 'path' 'working dir' "."
+
+opts_AddOptional '--gdcoeffs' 'GradientDistortionCoeffs' 'path' "gradient distortion coefficients file" "NONE"
+
+opts_ParseArguments "$@"
+
+if ((pipedirguessed))
+then
+    log_Err_Abort "HCPPIPEDIR is not set, you must first source your edited copy of Examples/Scripts/SetUpHCPPipeline.sh"
 fi
 
-if [ -z "${HCPPIPEDIR_Global}" ]; then
-    echo "$(basename ${0}): ABORTING: HCPPIPEDIR_Global environment variable must be set"
-    exit 1
-else
-    echo "$(basename ${0}): HCPPIPEDIR_Global: ${HCPPIPEDIR_Global}"
-fi
+#display the parsed/default values
+opts_ShowValues
 
-################################################ SUPPORT FUNCTIONS ##################################################
-
-source "${HCPPIPEDIR}/global/scripts/debug.shlib" "$@" # Debugging functions; also sources log.shlib
-
-Usage() {
-  echo "$(basename $0): Script for generating a fieldmap suitable for FSL from Siemens Gradient Echo field map,"
-  echo "               and also do gradient non-linearity distortion correction of these"
-  echo " "
-  echo "Usage: $(basename $0) [--workingdir=<working directory>]"
-  echo "            --method=<distortion correction method (SiemensFieldMap/PhilipsFieldMap/GeneralElectricFieldMap)>"
-  echo "            --fmapmag=<input Siemens/Philips fieldmap magnitude image - can be a 4D containing more than one>"
-  echo "            --fmapphase=<input Siemens/Philips fieldmap phase image - in radians>"
-  echo "            --fmap=<input General Electric fieldmap with fieldmap in deg and magnitude image>"
-  echo "            --echodiff=<echo time difference for Siemens and Philips fieldmap images (in milliseconds)>"
-  echo "            --ofmapmag=<output distortion corrected fieldmap magnitude image>"
-  echo "            --ofmapmagbrain=<output distortion-corrected brain-extracted fieldmap magnitude image>"
-  echo "            --ofmap=<output distortion corrected fieldmap image (rad/s)>"
-  echo "            [--gdcoeffs=<gradient distortion coefficients file>]"
-}
-
-# function for parsing options
-getopt1() {
-    sopt="$1"
-    shift 1
-    for fn in $@ ; do
-    if [ `echo $fn | grep -- "^${sopt}=" | wc -w` -gt 0 ] ; then
-        echo $fn | sed "s/^${sopt}=//"
-        return 0
-    fi
-    done
-}
-
-defaultopt() {
-    echo $1
-}
-
-
-################################################### OUTPUT FILES #####################################################
-
-# Output images (in $WD): Magnitude  Magnitude_brain Magnitude_brain_mask FieldMap  
-#         Plus the following if gradient distortion correction is run:
-#                         Magnitude_gdc Magnitude_gdc_warp  Magnitude_brain_gdc FieldMap_gdc  
-# Output images (not in $WD):  ${MagnitudeOutput}  ${MagnitudeBrainOutput}  ${FieldMapOutput}
-
-################################################## OPTION PARSING #####################################################
-
-# Just give usage if no arguments specified
-if [ $# -eq 0 ] ; then Usage; exit 0; fi
-# check for correct options
-if [ $# -lt 5 ] ; then Usage; exit 1; fi
-
-# parse arguments
-WD=`getopt1 "--workingdir" $@`
-DistortionCorrection=`getopt1 "--method" $@`
+log_Check_Env_Var FSLDIR
 
 case $DistortionCorrection in
 
@@ -99,21 +89,46 @@ case $DistortionCorrection in
         # --------------------------------------
         # -- Siemens Gradient Echo Field Maps --
         # --------------------------------------
+        if [[ $MagnitudeInputName == "" ||  $PhaseInputName == "" ]]
+        then 
+            log_Err_Abort "$DistortionCorrection method requires --fmapmag and --fmapphase"
+        fi
+        ;;
 
-        MagnitudeInputName=`getopt1 "--fmapmag" $@`
-        PhaseInputName=`getopt1 "--fmapphase" $@`
-        DeltaTE=`getopt1 "--echodiff" $@`
+    ${GE_HEALTHCARE_LEGACY_METHOD_OPT})
+
+        # ---------------------------------------------------
+        # -- GE HealthCare Legacy Gradient Echo Field Maps --
+        # --------------------------------------------------- 
+
+        if [[ $GEB0InputName == "" ]]
+        then 
+            log_Err_Abort "$DistortionCorrection method requires --fmapcombined"
+        fi
+        
+        # Check that FSL is at least the minimum required FSL version, abort if needed (and log FSL-version)
+        # GEHEALTHCARE_MINIMUM_FSL_VERSION defined in global/scripts/fsl_version.shlib
+        fsl_minimum_required_version_check "$GEHEALTHCARE_MINIMUM_FSL_VERSION" \
+            "For $DistortionCorrection method the minimum required FSL version is ${GEHEALTHCARE_MINIMUM_FSL_VERSION}."
 
         ;;
 
-    ${GENERAL_ELECTRIC_METHOD_OPT})
+    ${GE_HEALTHCARE_METHOD_OPT})
+        
+        # --------------------------------------------
+        # -- GE HealthCare Gradient Echo Field Maps --
+        # --------------------------------------------
 
-        # -----------------------------------------------
-        # -- General Electric Gradient Echo Field Maps --
-        # ----------------------------------------------- 
-
-        GEB0InputName=`getopt1 "--fmap" $@`
-
+        if [[ $MagnitudeInputName == "" ||  $PhaseInputName == "" ]]
+        then 
+            log_Err_Abort "$DistortionCorrection method requires --fmapmag and --fmapphase"
+        fi
+        
+        # Check that FSL is at least the minimum required FSL version, abort if needed (and log FSL-version)
+        # GEHEALTHCARE_MINIMUM_FSL_VERSION defined in global/scripts/fsl_version.shlib
+        fsl_minimum_required_version_check "$GEHEALTHCARE_MINIMUM_FSL_VERSION" \
+            "For $DistortionCorrection method the minimum required FSL version is ${GEHEALTHCARE_MINIMUM_FSL_VERSION}."
+        
         ;;
 
     ${PHILIPS_METHOD_OPT})
@@ -121,11 +136,10 @@ case $DistortionCorrection in
         # --------------------------------------
         # -- Philips Gradient Echo Field Maps --
         # --------------------------------------
-
-        MagnitudeInputName=`getopt1 "--fmapmag" $@`
-        PhaseInputName=`getopt1 "--fmapphase" $@`
-        DeltaTE=`getopt1 "--echodiff" $@`
-
+        if [[ $MagnitudeInputName == "" ||  $PhaseInputName == "" ]]
+        then 
+            log_Err_Abort "$DistortionCorrection method requires --fmapmag and --fmapphase"
+        fi
         ;;
 
     *)
@@ -133,15 +147,8 @@ case $DistortionCorrection in
         log_Err_Abort "Unrecognized distortion correction method: ${DistortionCorrection}"
 esac
 
-MagnitudeOutput=`getopt1 "--ofmapmag" $@`
-MagnitudeBrainOutput=`getopt1 "--ofmapmagbrain" $@`
-FieldMapOutput=`getopt1 "--ofmap" $@`
-GradientDistortionCoeffs=`getopt1 "--gdcoeffs" $@`
-
 # default parameters
 GlobalScripts=${HCPPIPEDIR_Global}
-WD=`defaultopt $WD .`
-GradientDistortionCoeffs=`defaultopt $GradientDistortionCoeffs "NONE"`
 
 log_Msg "Field Map Preprocessing and Gradient Unwarping"
 log_Msg "START"
@@ -156,6 +163,21 @@ echo " " >> $WD/log.txt
 
 ########################################## DO WORK ########################################## 
 
+function tmeanInputs()
+{
+    input="$1"
+    output="$2"
+    if [[ "$input" == *@* ]]
+    then
+        IFS=@ read -a filesarray <<<"$input"
+        tempfiles_create FieldMap_inputMerge_XXXXXX.nii.gz mergeTemp
+        "$FSLDIR"/bin/fslmerge -t "$mergeTemp" "${filesarray[@]}"
+        "$FSLDIR"/bin/fslmaths "$mergeTemp" -Tmean "$output"
+    else
+        "$FSLDIR"/bin/fslmaths "$input" -Tmean "$output"
+    fi
+}
+
 case $DistortionCorrection in
 
     $SIEMENS_METHOD_OPT)
@@ -164,64 +186,75 @@ case $DistortionCorrection in
         # -- Siemens Gradient Echo Field Maps --
         # --------------------------------------
 
-            ${FSLDIR}/bin/fslmaths ${MagnitudeInputName} -Tmean ${WD}/Magnitude
-            ${FSLDIR}/bin/bet ${WD}/Magnitude ${WD}/Magnitude_brain -f 0.35 -m #Brain extract the magnitude image
-            ${FSLDIR}/bin/imcp ${PhaseInputName} ${WD}/Phase
-            ${FSLDIR}/bin/fsl_prepare_fieldmap SIEMENS ${WD}/Phase ${WD}/Magnitude_brain ${WD}/FieldMap ${DeltaTE}
+        tmeanInputs "$MagnitudeInputName" "$WD"/Magnitude.nii.gz
+        ${FSLDIR}/bin/bet ${WD}/Magnitude ${WD}/Magnitude_brain -f 0.35 -m #Brain extract the magnitude image
+        ${FSLDIR}/bin/imcp ${PhaseInputName} ${WD}/Phase
+        ${FSLDIR}/bin/fsl_prepare_fieldmap SIEMENS ${WD}/Phase ${WD}/Magnitude_brain ${WD}/FieldMap ${DeltaTE}
 
         ;;
 
-    ${GENERAL_ELECTRIC_METHOD_OPT})
+    ${GE_HEALTHCARE_LEGACY_METHOD_OPT})
 
-        # -----------------------------------------------
-        # -- General Electric Gradient Echo Field Maps --
-        # ----------------------------------------------- 
+        # ---------------------------------------------------
+        # -- GE HealthCare Legacy Gradient Echo Field Maps --
+        # --------------------------------------------------- 
 
-            ${FSLDIR}/bin/fslsplit ${GEB0InputName}     # split image into vol0000=fieldmap and vol0001=magnitude
-            mv vol0000.nii.gz ${WD}/FieldMap_deg.nii.gz
-            mv vol0001.nii.gz ${WD}/Magnitude.nii.gz
-            ${FSLDIR}/bin/bet ${WD}/Magnitude ${WD}/Magnitude_brain -f 0.35 -m #Brain extract the magnitude image
-            ${FSLDIR}/bin/fslmaths ${WD}/FieldMap_deg.nii.gz -mul 6.28 ${WD}/FieldMap.nii.gz
+        ${FSLDIR}/bin/fslsplit ${GEB0InputName} ${WD}/vol     # split image into vol0000=fieldmap and vol0001=magnitude
+        ${FSLDIR}/bin/immv ${WD}/vol0000.nii.gz ${WD}/FieldMapHertz
+        ${FSLDIR}/bin/immv ${WD}/vol0001.nii.gz ${WD}/Magnitude
+        ${FSLDIR}/bin/bet ${WD}/Magnitude ${WD}/Magnitude_brain -f 0.35 -m #Brain extract the magnitude image
+        ${FSLDIR}/bin/fsl_prepare_fieldmap GEHC_FIELDMAPHZ ${WD}/FieldMapHertz ${WD}/Magnitude_brain ${WD}/FieldMap ${DeltaTE}
 
         ;;
+    ${GE_HEALTHCARE_METHOD_OPT})
 
+        # --------------------------------------------
+        # -- GE HealthCare Gradient Echo Field Maps --
+        # -------------------------------------------- 
+        
+        tmeanInputs "$MagnitudeInputName" "$WD"/Magnitude.nii.gz
+        ${FSLDIR}/bin/bet ${WD}/Magnitude ${WD}/Magnitude_brain -f 0.35 -m #Brain extract the magnitude image
+        ${FSLDIR}/bin/imcp ${PhaseInputName} ${WD}/FieldMapHertz
+        ${FSLDIR}/bin/fsl_prepare_fieldmap GEHC_FIELDMAPHZ ${WD}/FieldMapHertz ${WD}/Magnitude_brain ${WD}/FieldMap ${DeltaTE}
+
+        ;;
     ${PHILIPS_METHOD_OPT})
 
         # --------------------------------------
         # -- Philips Gradient Echo Field Maps --
         # --------------------------------------
 
-            ${FSLDIR}/bin/fslmaths ${MagnitudeInputName} -Tmean ${WD}/Magnitude
-            # Brain extract the magnitude image
-            ${FSLDIR}/bin/bet ${WD}/Magnitude ${WD}/Magnitude_brain -f 0.35 -m
-            ${FSLDIR}/bin/fslmaths ${WD}/Magnitude_brain -ero ${WD}/Magnitude_brain_ero
-            rm ${WD}/Magnitude_brain.nii.gz
-            mv ${WD}/Magnitude_brain_ero.nii.gz ${WD}/Magnitude_brain.nii.gz
+        tmeanInputs "$MagnitudeInputName" "$WD"/Magnitude.nii.gz
+        # Brain extract the magnitude image
+        ${FSLDIR}/bin/bet ${WD}/Magnitude ${WD}/Magnitude_brain -f 0.35 -m
+        ${FSLDIR}/bin/fslmaths ${WD}/Magnitude_brain -ero ${WD}/Magnitude_brain_ero
+        rm ${WD}/Magnitude_brain.nii.gz
+        mv ${WD}/Magnitude_brain_ero.nii.gz ${WD}/Magnitude_brain.nii.gz
 
-            # Take the absolute value of the magnitude data (some images used negative values for the coding)
-            ${FSLDIR}/bin/fslmaths ${WD}/Magnitude_brain.nii.gz -abs ${WD}/Magnitude_brain.nii.gz
-            # Create a binary brain mask
-            ${FSLDIR}/bin/fslmaths ${WD}/Magnitude_brain.nii.gz -thr 0.00000001 -bin ${WD}/Mask_brain.nii.gz
-            # Convert fieldmap in Hz to rad/s
-            $FSLDIR/bin/fslmaths ${PhaseInputName} -mul 6.28318 -mas ${WD}/Mask_brain.nii.gz ${WD}/FieldMap_rad_per_s -odt float
+        # Take the absolute value of the magnitude data (some images used negative values for the coding)
+        ${FSLDIR}/bin/fslmaths ${WD}/Magnitude_brain.nii.gz -abs ${WD}/Magnitude_brain.nii.gz
+        # Create a binary brain mask
+        ${FSLDIR}/bin/fslmaths ${WD}/Magnitude_brain.nii.gz -thr 0.00000001 -bin ${WD}/Mask_brain.nii.gz
+        # Convert fieldmap in Hz to rad/s
+        $FSLDIR/bin/fslmaths ${PhaseInputName} -mul 6.28318 -mas ${WD}/Mask_brain.nii.gz ${WD}/FieldMap_rad_per_s -odt float
 
-            # If echodiff was passed unwrap the fieldmap
-            if [ ! -z $DeltaTE ] && [ $DeltaTE != "NONE" ]
-            then
-                # DeltaTE is echo time difference in ms
-                asym=`echo ${DeltaTE} / 1000 | bc -l`
-                # Convert fieldmap in rad/s back to phasediff image in rad for unwrapping
-                $FSLDIR/bin/fslmaths ${WD}/FieldMap_rad_per_s -mul $asym -mas ${WD}/Mask_brain.nii.gz ${WD}/Phasediff_rad -odt float
-                # Unwrap fieldmap
-                $FSLDIR/bin/prelude -p ${WD}/Phasediff_rad -a ${WD}/Magnitude_brain.nii.gz -m ${WD}/Mask_brain.nii.gz -o ${WD}/Phasediff_rad_unwrapped -v
-                # Convert to fiedlmap in rads/sec
-                $FSLDIR/bin/fslmaths ${WD}/Phasediff_rad_unwrapped -div $asym ${WD}/FieldMap_rad_per_s -odt float 
-            fi
-            
-            # Call FUGUE to extrapolate from mask (fill holes, etc)
-            $FSLDIR/bin/fugue --loadfmap=${WD}/FieldMap_rad_per_s --mask=${WD}/Mask_brain.nii.gz --savefmap=${WD}/FieldMap.nii.gz
-            # Demean the image (avoid voxel translation)
-            $FSLDIR/bin/fslmaths ${WD}/FieldMap.nii.gz -sub `${FSLDIR}/bin/fslstats ${WD}/FieldMap.nii.gz -k ${WD}/Mask_brain.nii.gz -P 50` -mas ${WD}/Mask_brain.nii.gz ${WD}/FieldMap.nii.gz -odt float
+        # If echodiff was passed unwrap the fieldmap
+        if [ ! -z $DeltaTE ] && [ $DeltaTE != "NONE" ]
+        then
+            # DeltaTE is echo time difference in ms
+            asym=`echo ${DeltaTE} / 1000 | bc -l`
+            # Convert fieldmap in rad/s back to phasediff image in rad for unwrapping
+            $FSLDIR/bin/fslmaths ${WD}/FieldMap_rad_per_s -mul $asym -mas ${WD}/Mask_brain.nii.gz ${WD}/Phasediff_rad -odt float
+            # Unwrap fieldmap
+            $FSLDIR/bin/prelude -p ${WD}/Phasediff_rad -a ${WD}/Magnitude_brain.nii.gz -m ${WD}/Mask_brain.nii.gz -o ${WD}/Phasediff_rad_unwrapped -v
+            # Convert to fiedlmap in rads/sec
+            $FSLDIR/bin/fslmaths ${WD}/Phasediff_rad_unwrapped -div $asym ${WD}/FieldMap_rad_per_s -odt float 
+        fi
+
+        # Call FUGUE to extrapolate from mask (fill holes, etc)
+        $FSLDIR/bin/fugue --loadfmap=${WD}/FieldMap_rad_per_s --mask=${WD}/Mask_brain.nii.gz --savefmap=${WD}/FieldMap.nii.gz
+        # Demean the image (avoid voxel translation)
+        $FSLDIR/bin/fslmaths ${WD}/FieldMap.nii.gz -sub `${FSLDIR}/bin/fslstats ${WD}/FieldMap.nii.gz -k ${WD}/Mask_brain.nii.gz -P 50` -mas ${WD}/Mask_brain.nii.gz ${WD}/FieldMap.nii.gz -odt float
 
         ;;
 

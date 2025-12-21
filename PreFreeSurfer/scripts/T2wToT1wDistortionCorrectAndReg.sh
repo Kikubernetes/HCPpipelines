@@ -10,7 +10,10 @@
 
 SIEMENS_METHOD_OPT="SiemensFieldMap"
 SPIN_ECHO_METHOD_OPT="TOPUP"
-GENERAL_ELECTRIC_METHOD_OPT="GeneralElectricFieldMap"
+# For GE HealthCare Fieldmap Distortion Correction methods 
+# see explanations in global/scripts/FieldMapPreprocessingAll.sh
+GE_HEALTHCARE_LEGACY_METHOD_OPT="GEHealthCareLegacyFieldMap" 
+GE_HEALTHCARE_METHOD_OPT="GEHealthCareFieldMap"
 PHILIPS_METHOD_OPT="PhilipsFieldMap"
 FIELDMAP_METHOD_OPT="FIELDMAP"
 
@@ -18,104 +21,108 @@ FIELDMAP_METHOD_OPT="FIELDMAP"
 #  Usage Description Function
 # ------------------------------------------------------------------------------
 
-script_name=$(basename "${0}")
 
-Usage() {
-	cat <<EOF
+set -eu
 
-${script_name}: Script for performing gradient-nonlinearity and susceptibility-induced distortion correction on T1w and T2w images, then also registering T2w to T1w
-
-Usage: ${script_name}
-  [--workingdir=<working directory>]
-  --t1=<input T1w image>
-  --t1brain=<input T1w brain-extracted image>
-  --t2=<input T2w image>
-  --t2brain=<input T2w brain-extracted image>
-  [--fmapmag=<input fieldmap magnitude image>]
-  [--fmapphase=<input fieldmap phase images (single 4D image containing 2x3D volumes)>]
-  [--fmapgeneralelectric=<input General Electric field map (two volumes: 1. field map in deg, 2. magnitude)>]
-  [--echodiff=<echo time difference for fieldmap images (in milliseconds)>]
-  [--SEPhaseNeg=<input spin echo negative phase encoding image>]
-  [--SEPhasePos=<input spin echo positive phase encoding image>]
-  [--seechospacing=<effective echo spacing of SEPhaseNeg and SEPhasePos, in seconds>]
-  [--seunwarpdir=<direction of distortion of the SEPhase images according to *voxel* axes: {x,y,x-,y-} or {i,j,i-,j-}>]
-  --t1sampspacing=<sample spacing (readout direction) of T1w image - in seconds>
-  --t2sampspacing=<sample spacing (readout direction) of T2w image - in seconds>
-  --unwarpdir=<direction of distortion of T1 and T2 according to *voxel* axes (post fslreorient2std): {x,y,z,x-,y-,z-}, or {i,j,k,i-,j-,k-}>
-  --ot1=<output corrected T1w image>
-  --ot1brain=<output corrected, brain-extracted T1w image>
-  --ot1warp=<output warpfield for distortion correction of T1w image>
-  --ot2=<output corrected T2w image>
-  --ot2brain=<output corrected, brain-extracted T2w image>
-  --ot2warp=<output warpfield for distortion correction of T2w image>
-  --method=<method used for readout distortion correction>
-
-        "${SPIN_ECHO_METHOD_OPT}"
-           use Spin Echo Field Maps for readout distortion correction
-
-        "${PHILIPS_METHOD_OPT}"
-           use Philips specific Gradient Echo Field Maps for readout distortion correction
-
-        "${GENERAL_ELECTRIC_METHOD_OPT}"
-           use General Electric specific Gradient Echo Field Maps for readout distortion correction
-
-        "${SIEMENS_METHOD_OPT}"
-           use Siemens specific Gradient Echo Field Maps for readout distortion correction
-
-        "${FIELDMAP_METHOD_OPT}"
-           equivalent to ${SIEMENS_METHOD_OPT} (preferred)
-           This option is maintained for backward compatibility.
-
-  [--topupconfig=<topup config file>]
-  [--gdcoeffs=<gradient distortion coefficients (SIEMENS file)>]
-
-EOF
-}
-
-# Allow script to return a Usage statement, before any other output or checking
-if [ "$#" = "0" ]; then
-    Usage
-    exit 1
-fi
-
-# ------------------------------------------------------------------------------
-#  Check that HCPPIPEDIR is defined and Load Function Libraries
-# ------------------------------------------------------------------------------
-
-if [ -z "${HCPPIPEDIR}" ]; then
-  echo "${script_name}: ABORTING: HCPPIPEDIR environment variable must be set"
-  exit 1
+pipedirguessed=0
+if [[ "${HCPPIPEDIR:-}" == "" ]]
+then
+    pipedirguessed=1
+    #fix this if the script is more than one level below HCPPIPEDIR
+    export HCPPIPEDIR="$(dirname -- "$0")/../.."
 fi
 
 source "${HCPPIPEDIR}/global/scripts/debug.shlib" "$@"         # Debugging functions; also sources log.shlib
+source "$HCPPIPEDIR/global/scripts/newopts.shlib" "$@"
 
-# ------------------------------------------------------------------------------
-#  Verify required environment variables are set and log value
-# ------------------------------------------------------------------------------
+opts_SetScriptDescription "Script for performing gradient-nonlinearity and susceptibility-induced distortion correction on T1w and T2w images, then also registering T2w to T1w"
 
-log_Check_Env_Var HCPPIPEDIR
+opts_AddMandatory '--t1' 'T1wImage' 'image' "input T1w image"
+
+opts_AddMandatory '--t1brain' 'T1wImageBrain' 'image' "input T1w brain-extracted image"
+
+opts_AddMandatory '--t2' 'T2wImage' 'image' "input T2w image"
+
+opts_AddMandatory '--t2brain' 'T2wImageBrain' 'image' "input T2w brain-extracted image"
+
+opts_AddMandatory '--t1sampspacing' 'T1wSampleSpacing' 'value (seconds)' "sample spacing (readout direction) of T1w image - in seconds"
+
+opts_AddMandatory '--t2sampspacing' 'T2wSampleSpacing' 'value (seconds)' "sample spacing (readout direction) of T2w image - in seconds"
+
+opts_AddMandatory '--unwarpdir' 'UnwarpDir' '{x,y,z,x-,y-,z-} OR {i,j,k,i-,j-,k-}' "direction of distortion of T1 and T2 according to *voxel* axes (post fslreorient2std)"
+
+opts_AddMandatory '--ot1' 'OutputT1wImage' 'image' "output corrected T1w image"
+
+opts_AddMandatory '--ot1brain' 'OutputT1wImageBrain' 'image' "output corrected, brain-extracted T1w image"
+
+opts_AddMandatory '--ot1warp' 'OutputT1wTransform' 'image' "output warpfield for distortion correction of T1w image"
+
+opts_AddMandatory '--ot2' 'OutputT2wImage' 'image' "output corrected T2w image"
+
+opts_AddMandatory '--ot2warp' 'OutputT2wTransform' 'warpfield' "output warpfield for distortion correction of T2w image"
+
+opts_AddMandatory '--method' 'DistortionCorrection' 'method' "method used for readout distortion correction:
+        '${SPIN_ECHO_METHOD_OPT}'
+           use Spin Echo Field Maps for readout distortion correction
+
+        '${PHILIPS_METHOD_OPT}'
+           use Philips specific Gradient Echo Field Maps for readout distortion correction
+        
+        '${GE_HEALTHCARE_LEGACY_METHOD_OPT}'
+           use GE HealthCare Legacy specific Gradient Echo Field Maps for SDC (i.e., field map in Hz and magnitude image in a single NIfTI file, via --fmapcombined argument).
+           This option is maintained for backward compatibility.
+
+        '${GE_HEALTHCARE_METHOD_OPT}'
+           use GE HealthCare specific Gradient Echo Field Maps for SDC (i.e., field map in Hz and magnitude image in two separate NIfTI files, via --fmapphase and --fmapmag).
+
+        '${SIEMENS_METHOD_OPT}'
+           use Siemens specific Gradient Echo Field Maps for readout distortion correction
+
+        '${FIELDMAP_METHOD_OPT}'
+           equivalent to ${SIEMENS_METHOD_OPT} (preferred)
+           This option is maintained for backward compatibility."
+
+#optional args 
+
+opts_AddOptional '--workingdir' 'WD' 'path' "working directory" "."
+
+opts_AddOptional '--fmapmag' 'MagnitudeInputName' 'image' "input fieldmap magnitude images (@-separated)"
+
+opts_AddOptional '--fmapphase' 'PhaseInputName' 'image' "input fieldmap phase images in radians (Siemens/Philips) or in Hz (GE HealthCare)"
+
+opts_AddOptional '--fmapcombined' 'GEB0InputName' 'image' "input GE HealthCare Legacy field map only (two volumes: 1. field map in Hz and 2. magnitude image)" '' '--fmap'
+
+opts_AddOptional '--echodiff' 'DeltaTE' 'value (milliseconds)' "echo time difference for fieldmap images (in milliseconds)"
+
+opts_AddOptional '--SEPhaseNeg' 'SpinEchoPhaseEncodeNegative' 'image' "input spin echo negative phase encoding image"
+
+opts_AddOptional '--SEPhasePos' 'SpinEchoPhaseEncodePositive' 'image' "input spin echo positive phase encoding image"
+
+opts_AddOptional '--seechospacing' 'SEEchoSpacing' 'value (seconds)' "effective echo spacing of SEPhaseNeg and SEPhasePos or in seconds"
+
+opts_AddOptional '--seunwarpdir' 'SEUnwarpDir' '{x,y,x-,y-} OR {i,j,i-,j-}' "direction of distortion of the SEPhase images according to *voxel* axes"
+
+opts_AddOptional '--topupconfig' 'TopupConfig' 'file' "topup config file"
+
+opts_AddOptional '--gdcoeffs' 'GradientDistortionCoeffs' 'file' "gradient distortion coefficients (SIEMENS file)"
+
+#Tim special parsing 
+opts_AddOptional '--usejacobian' 'UseJacobian' 'true or false' "Use jacobian" 
+
+opts_ParseArguments "$@"
+
+if ((pipedirguessed))
+then
+    log_Err_Abort "HCPPIPEDIR is not set, you must first source your edited copy of Examples/Scripts/SetUpHCPPipeline.sh"
+fi
+
+#display the parsed/default values
+opts_ShowValues
+
 log_Check_Env_Var FSLDIR
 log_Check_Env_Var HCPPIPEDIR_Global
 
-################################################ SUPPORT FUNCTIONS ##################################################
-
-# function for parsing options
-getopt1() {
-    sopt="$1"
-    shift 1
-    for fn in $@ ; do
-  if [ `echo $fn | grep -- "^${sopt}=" | wc -w` -gt 0 ] ; then
-      echo $fn | sed "s/^${sopt}=//"
-      return 0
-  fi
-    done
-}
-
-defaultopt() {
-    echo $1
-}
-
-################################################### OUTPUT FILES #####################################################
+# ################################################### OUTPUT FILES #####################################################
 
 # For distortion correction:
 #
@@ -139,36 +146,6 @@ defaultopt() {
 #        Note that these outputs are copies of the last two images (respectively) from the T2w2T1w subdirectory
 
 ################################################## OPTION PARSING #####################################################
-
-# parse arguments
-WD=`getopt1 "--workingdir" $@`  
-T1wImage=`getopt1 "--t1" $@`  
-T1wImageBrain=`getopt1 "--t1brain" $@`  
-T2wImage=`getopt1 "--t2" $@` 
-T2wImageBrain=`getopt1 "--t2brain" $@`  
-MagnitudeInputName=`getopt1 "--fmapmag" $@`  
-PhaseInputName=`getopt1 "--fmapphase" $@`  
-GEB0InputName=`getopt1 "--fmapgeneralelectric" $@` 
-TE=`getopt1 "--echodiff" $@`  
-SpinEchoPhaseEncodeNegative=`getopt1 "--SEPhaseNeg" $@`  
-SpinEchoPhaseEncodePositive=`getopt1 "--SEPhasePos" $@`  
-SEEchoSpacing=`getopt1 "--seechospacing" $@` 
-SEUnwarpDir=`getopt1 "--seunwarpdir" $@`  
-T1wSampleSpacing=`getopt1 "--t1sampspacing" $@`  
-T2wSampleSpacing=`getopt1 "--t2sampspacing" $@`  
-UnwarpDir=`getopt1 "--unwarpdir" $@`  
-OutputT1wImage=`getopt1 "--ot1" $@`  
-OutputT1wImageBrain=`getopt1 "--ot1brain" $@`  
-OutputT1wTransform=`getopt1 "--ot1warp" $@`  
-OutputT2wImage=`getopt1 "--ot2" $@`  
-OutputT2wTransform=`getopt1 "--ot2warp" $@`  
-DistortionCorrection=`getopt1 "--method" $@`  
-TopupConfig=`getopt1 "--topupconfig" $@`  
-GradientDistortionCoeffs=`getopt1 "--gdcoeffs" $@`  
-UseJacobian=`getopt1 "--usejacobian" $@`
-
-# default parameters
-WD=`defaultopt $WD .`
 
 T1wImage=`${FSLDIR}/bin/remove_ext $T1wImage`
 T1wImageBrain=`${FSLDIR}/bin/remove_ext $T1wImageBrain`
@@ -195,8 +172,8 @@ verbose_echo "                     T2wImage                  (t2): $T2wImage"
 verbose_echo "                T2wImageBrain             (t2brain): $T2wImageBrain"
 verbose_echo "           MagnitudeInputName             (fmapmag): $MagnitudeInputName"
 verbose_echo "               PhaseInputName           (fmapphase): $PhaseInputName"
-verbose_echo "                GEB0InputName (fmapgeneralelectric): $GEB0InputName"
-verbose_echo "                           TE            (echodiff): $TE"
+verbose_echo "                GEB0InputName        (fmapcombined): $GEB0InputName"
+verbose_echo "                      DeltaTE            (echodiff): $DeltaTE"
 verbose_echo "  SpinEchoPhaseEncodeNegative          (SEPhaseNeg): $SpinEchoPhaseEncodeNegative"
 verbose_echo "  SpinEchoPhaseEncodePositive          (SEPhasePos): $SpinEchoPhaseEncodePositive"
 verbose_echo "               SEEchoSpacing        (seechospacing): $SEEchoSpacing"
@@ -246,7 +223,7 @@ case $DistortionCorrection in
             --method="SiemensFieldMap" \
             --fmapmag=${MagnitudeInputName} \
             --fmapphase=${PhaseInputName} \
-            --echodiff=${TE} \
+            --echodiff=${DeltaTE} \
             --ofmapmag=${WD}/Magnitude \
             --ofmapmagbrain=${WD}/Magnitude_brain \
             --ofmap=${WD}/FieldMap \
@@ -254,11 +231,11 @@ case $DistortionCorrection in
 
         ;;
 
-    ${GENERAL_ELECTRIC_METHOD_OPT})
+    ${GE_HEALTHCARE_LEGACY_METHOD_OPT})
 
-        # -----------------------------------------------
-        # -- General Electric Gradient Echo Field Maps --
-        # -----------------------------------------------
+        # ---------------------------------------------------
+        # -- GE HealthCare Legacy Gradient Echo Field Maps --
+        # ---------------------------------------------------
 
         ### Create fieldmaps (and apply gradient non-linearity distortion correction)
         echo " "
@@ -267,8 +244,33 @@ case $DistortionCorrection in
 
         ${HCPPIPEDIR_Global}/FieldMapPreprocessingAll.sh \
             --workingdir=${WD}/FieldMap \
-            --method="GeneralElectricFieldMap" \
-            --fmap=${GEB0InputName} \
+            --method="GEHealthCareLegacyFieldMap" \
+            --fmapcombined=${GEB0InputName} \
+            --echodiff=${DeltaTE} \
+            --ofmapmag=${WD}/Magnitude \
+            --ofmapmagbrain=${WD}/Magnitude_brain \
+            --ofmap=${WD}/FieldMap \
+            --gdcoeffs=${GradientDistortionCoeffs}
+
+        ;;
+
+    ${GE_HEALTHCARE_METHOD_OPT})
+
+        # -------------------------------------------
+        # -- GE HealthCare Gradient Echo Field Maps --
+        # --------------------------------------------
+
+        ### Create fieldmaps (and apply gradient non-linearity distortion correction)
+        echo " "
+        echo " "
+        echo " " 
+
+        ${HCPPIPEDIR_Global}/FieldMapPreprocessingAll.sh \
+            --workingdir=${WD}/FieldMap \
+            --method="GEHealthCareFieldMap" \
+            --fmapmag=${MagnitudeInputName} \
+            --fmapphase=${PhaseInputName} \
+            --echodiff=${DeltaTE} \
             --ofmapmag=${WD}/Magnitude \
             --ofmapmagbrain=${WD}/Magnitude_brain \
             --ofmap=${WD}/FieldMap \
@@ -292,7 +294,7 @@ case $DistortionCorrection in
             --method="PhilipsFieldMap" \
             --fmapmag=${MagnitudeInputName} \
             --fmapphase=${PhaseInputName} \
-            --echodiff=${TE} \
+            --echodiff=${DeltaTE} \
             --ofmapmag=${WD}/Magnitude \
             --ofmapmagbrain=${WD}/Magnitude_brain \
             --ofmap=${WD}/FieldMap \
@@ -390,7 +392,7 @@ for TXw in $Modalities ; do
 
     case $DistortionCorrection in
 
-        ${FIELDMAP_METHOD_OPT} | ${SIEMENS_METHOD_OPT} | ${GENERAL_ELECTRIC_METHOD_OPT} | ${PHILIPS_METHOD_OPT})
+        ${FIELDMAP_METHOD_OPT} | ${SIEMENS_METHOD_OPT} | ${GE_HEALTHCARE_LEGACY_METHOD_OPT} | ${GE_HEALTHCARE_METHOD_OPT} | ${PHILIPS_METHOD_OPT})
             ${FSLDIR}/bin/applywarp --rel --interp=spline -i ${WD}/Magnitude -r ${WD}/Magnitude -w ${WD}/FieldMap_Warp${TXw}.nii.gz -o ${WD}/Magnitude_warpped${TXw}
             ${FSLDIR}/bin/flirt -interp spline -dof 6 -in ${WD}/Magnitude_warpped${TXw} -ref ${TXwImage} -out ${WD}/Magnitude_warpped${TXw}2${TXwImageBasename} -omat ${WD}/Fieldmap2${TXwImageBasename}.mat -searchrx -30 30 -searchry -30 30 -searchrz -30 30
             ;;
@@ -409,8 +411,7 @@ for TXw in $Modalities ; do
     ${FSLDIR}/bin/flirt -in ${WD}/FieldMap.nii.gz -ref ${TXwImage} -applyxfm -init ${WD}/Fieldmap2${TXwImageBasename}.mat -out ${WD}/FieldMap2${TXwImageBasename}
 
     # Convert to shift map then to warp field and unwarp the TXw
-
-    verbose_echo "      ... Converting to shift map, to warp field and unwarping $TWx"
+    verbose_echo "      ... Converting to shift map, to warp field and unwarping $TXw"
     ${FSLDIR}/bin/fugue --loadfmap=${WD}/FieldMap2${TXwImageBasename} --dwell=${TXwSampleSpacing} --saveshift=${WD}/FieldMap2${TXwImageBasename}_ShiftMap.nii.gz
     ${FSLDIR}/bin/convertwarp --relout --rel --ref=${TXwImageBrain} --shiftmap=${WD}/FieldMap2${TXwImageBasename}_ShiftMap.nii.gz --shiftdir=${UnwarpDir} --out=${WD}/FieldMap2${TXwImageBasename}_Warp.nii.gz
     ${FSLDIR}/bin/applywarp --rel --interp=spline -i ${TXwImage} -r ${TXwImage} -w ${WD}/FieldMap2${TXwImageBasename}_Warp.nii.gz -o ${WD}/${TXwImageBasename}
