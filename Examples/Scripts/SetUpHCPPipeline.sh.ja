@@ -1,14 +1,21 @@
 #!/bin/echo This script should be sourced before calling a pipeline script, and should not be run directly:
 
+#このスクリプトはパイプラインスクリプトを呼び出す前に source されるべきもので、直接実行してはいけません。
+
 #Don't edit this line
+#この行は編集しないでください
 SAVEHCPPIPE="${HCPPIPEDIR:-}"
 
 ## Edit this line: environment variable for location of HCP Pipeline repository
 ## If you leave it blank, and $HCPPIPEDIR already exists in the environment,
 ## that will be used instead (via the SAVEHCPPIPE variable, defined above)
+## この行を編集してください：HCP Pipeline リポジトリの場所を示す環境変数
+## 空欄のままにしておき、かつ環境に $HCPPIPEDIR がすでに存在する場合は、
+##（上で定義した SAVEHCPPIPE 変数を介して）それが代わりに使用されます
 export HCPPIPEDIR=${HOME}/git/HCPpipelines
 
 # Don't edit this section, it allows sourcing SetUp... without editing it if you set things in advance
+# このセクションは編集しないでください。事前に設定しておけば、SetUp... を編集せずに source できるようにするためのものです
 if [[ -z "$HCPPIPEDIR" ]]
 then
     if [[ -z "$SAVEHCPPIPE" ]]
@@ -20,35 +27,48 @@ then
 fi
 
 ## Edit this section: set up other environment variables
+## このセクションを編集してください：他の環境変数を設定します
 export MSMBINDIR=/usr/local/fsl/bin
 export MATLAB_COMPILER_RUNTIME=/usr/local/MATLAB/MCR/R2022b
 # export FSL_FIXDIR=/usr/local/fix # only needed for legacy fix
+# export FSL_FIXDIR=/usr/local/fix # legacy fix の場合のみ必要です
 # If a suitable version of wb_command is on your $PATH, CARET7DIR can be blank
+# $PATH 上に適切な wb_command がある場合、CARET7DIR は空でも構いません
 export CARET7DIR=
 export HCPCIFTIRWDIR="$HCPPIPEDIR"/global/matlab/cifti-matlab
 
 ## Set up FSL (if not already done so in the running environment)
 ## Uncomment the following 2 lines (remove the leading #) and correct the FSLDIR setting for your setup
+##（実行中の環境でまだ設定していない場合）FSL をセットアップします
+## 次の2行のコメントを外し（先頭の # を削除し）、環境に合わせて FSLDIR を修正してください
 #export FSLDIR=/usr/local/fsl
 #source "$FSLDIR/etc/fslconf/fsl.sh"
 
 ## Let FreeSurfer explicitly know what version of FSL to use (this shouldn't need changing)
+## FreeSurfer に、使用すべき FSL のバージョン（場所）を明示します（通常は変更不要です）
 export FSL_DIR="${FSLDIR}"
 
 ## Set up FreeSurfer (if not already done so in the running environment)
 ## Uncomment the following 2 lines (remove the leading #) and correct the FREESURFER_HOME setting for your setup
+##（実行中の環境でまだ設定していない場合）FreeSurfer をセットアップします
+## 次の2行のコメントを外し（先頭の # を削除し）、環境に合わせて FREESURFER_HOME を修正してください
 #export FREESURFER_HOME=/usr/local/bin/freesurfer
 #source ${FREESURFER_HOME}/SetUpFreeSurfer.sh > /dev/null 2>&1
 
 # If you want to use MSM Configuration files other than those already provided, can change the following
+# 既定で提供されているもの以外の MSM 設定ファイルを使いたい場合は、以下を変更できます
 export MSMCONFIGDIR="${HCPPIPEDIR}/MSMConfig"
 
 
 # ---------------------------------------------------------
 # Users probably won't need to edit anything below this line
 # ---------------------------------------------------------
+# ---------------------------------------------------------
+# この行より下は、通常ユーザーが編集する必要はありません
+# ---------------------------------------------------------
 
 # Sanity check things and/or populate from $PATH
+# 整合性チェックを行い、必要に応じて $PATH から情報を補完します
 
 # FSL
 if [[ -z "${FSLDIR:-}" ]]
@@ -58,22 +78,28 @@ then
     then
         #like our scripts, assume $FSLDIR/bin/fslmaths (neurodebian doesn't follow this, so sanity check)
         #yes, quotes nest properly inside of $()
+        # 私たちのスクリプトと同様に $FSLDIR/bin/fslmaths を想定します（neurodebian はこの構成に従わないため、整合性チェックします）
+        # はい、$() の内側で引用符は正しく入れ子になります
         export FSLDIR=$(dirname "$(dirname "$found_fsl")")
         #if we didn't have FSLDIR, assume we haven't sourced fslconf
+        # FSLDIR が未設定だった場合、fslconf を source していないものとみなします
         if [[ ! -f "$FSLDIR/etc/fslconf/fsl.sh" ]]
         then
             echo "FSLDIR was unset, and guessed FSLDIR ($FSLDIR) does not contain etc/fslconf/fsl.sh, please specify FSLDIR in the setup script" 1>&2
             #NOTE: do not "exit", as this will terminate an interactive shell - the pipeline should sanity check a few things, and will hopefully catch it quickly
+            # 注意：ここで "exit" しないでください。対話シェルが終了してしまうためです。パイプライン側でもいくつか整合性チェックを行い、早期に検出できるはずです
         else
             source "$FSLDIR/etc/fslconf/fsl.sh"
         fi
     else
         echo "fslmaths not found in \$PATH, please install FSL and ensure it is on \$PATH, or edit the setup script to specify its location" 1>&2
+        # $PATH に fslmaths が見つかりません。FSL をインストールして $PATH に入れるか、セットアップスクリプトで場所を指定してください
     fi
 fi
 if [[ ! -x "$FSLDIR/bin/fslmaths" ]]
 then
     echo "FSLDIR ($FSLDIR) does not contain bin/fslmaths, please fix the settings in the setup script" 1>&2
+    # FSLDIR ($FSLDIR) に bin/fslmaths がありません。セットアップスクリプト内の設定を修正してください
 fi
 
 # Workbench
@@ -85,19 +111,24 @@ then
         CARET7DIR=$(dirname "$found_wb")
     else
         echo "wb_command not found in \$PATH, please install connectome workbench and ensure it is on \$PATH, or edit the setup script to specify its location" 1>&2
+        # $PATH に wb_command が見つかりません。Connectome Workbench をインストールして $PATH に入れるか、セットアップスクリプトで場所を指定してください
     fi
 fi
 if [[ ! -x "$CARET7DIR/wb_command" ]]
 then
     echo "CARET7DIR ($CARET7DIR) does not contain wb_command, please fix the settings in the setup script" 1>&2
+    # CARET7DIR ($CARET7DIR) に wb_command がありません。セットアップスクリプト内の設定を修正してください
 fi
 
 # Add the specified versions of some things to the front of $PATH, so we can stop using absolute paths everywhere
+# いくつかの指定バージョンを $PATH の先頭に追加し、以後は絶対パスをいちいち使わなくて済むようにします
 if [[ -d "$FSLDIR/share/fsl/bin" ]] ; then
     # For FSL 6.0.6 (release date: 22 Nov 2022) or later
+    # FSL 6.0.6（リリース日：2022年11月22日）以降の場合
     export PATH="$FSLDIR/share/fsl/bin:$PATH"
 else
     # For older versions of FSL
+    # 古いバージョンの FSL の場合
     export PATH="$FSLDIR/bin:$PATH"
 fi
 export PATH="$CARET7DIR:$PATH"
@@ -105,9 +136,12 @@ export PATH="$CARET7DIR:$PATH"
 # Source extra stuff that pipelines authors may need to edit, but users shouldn't ever need to
 # by separating them this way, a user can continue to use their previous setup file even if we
 # rearrange some internal things
+# パイプライン開発者は編集する必要があるかもしれないが、ユーザーは基本的に編集不要な追加設定を source します
+# これらを分離しておくことで、内部構成を多少組み替えても、ユーザーは従来のセットアップファイルを使い続けられます
 if [[ ! -f "$HCPPIPEDIR/global/scripts/finish_hcpsetup.shlib" ]]
 then
     echo "HCPPIPEDIR ($HCPPIPEDIR) appears to be set to an old version of the pipelines, please check the setting (or start from the older SetUpHCPPipeline.sh to run the older pipelines)"
+    # HCPPIPEDIR ($HCPPIPEDIR) は古いバージョンの pipelines を指しているようです。設定を確認してください（または古いパイプラインを動かすには、古い SetUpHCPPipeline.sh から開始してください）
 fi
 
 source "$HCPPIPEDIR/global/scripts/finish_hcpsetup.shlib"

@@ -29,7 +29,7 @@ get_batch_options() {
                 ;;
             *)
                 echo ""
-                echo "ERROR: Unrecognized Option: ${argument}"
+                echo "ERROR: 認識できないオプション: ${argument}"
                 echo ""
                 exit 1
                 ;;
@@ -39,9 +39,9 @@ get_batch_options() {
 
 get_batch_options "$@"
 
-StudyFolder="${HOME}/projects/Pipelines_ExampleData" #Location of Subject folders (named by subjectID)
-Subjlist="100307" #Space delimited list of subject IDs
-EnvironmentScript="${HOME}/git/HCPpipelines/Examples/Scripts/SetUpHCPPipeline.sh" #Pipeline environment script
+StudyFolder="${HOME}/projects/Pipelines_ExampleData" # Subject フォルダ（subjectID 名）の置き場所
+Subjlist="100307" # Subject ID のスペース区切りリスト
+EnvironmentScript="${HOME}/git/HCPpipelines/Examples/Scripts/SetUpHCPPipeline.sh" # パイプライン環境設定スクリプト
 
 if [ -n "${command_line_specified_study_folder}" ]; then
     StudyFolder="${command_line_specified_study_folder}"
@@ -51,48 +51,49 @@ if [ -n "${command_line_specified_subj}" ]; then
     Subjlist="${command_line_specified_subj}"
 fi
 
-# Requirements for this script
-#  installed versions of: FSL, Connectome Workbench (wb_command)
-#  environment: HCPPIPEDIR, FSLDIR, CARET7DIR
+# このスクリプトの要件
+#  インストール済みである必要があるもの: FSL, Connectome Workbench (wb_command)
+#  環境変数: HCPPIPEDIR, FSLDIR, CARET7DIR
 
-#Set up pipeline environment variables and software
+# パイプライン用の環境変数およびソフトウェアを設定
 source "$EnvironmentScript"
 
-# Log the originating call
+# 呼び出し元のコマンドライン引数をログとして出力
 echo "$@"
 
-#NOTE: syntax for QUEUE has changed compared to earlier pipeline releases,
-#DO NOT include "-q " at the beginning
-#default to no queue, implying run local
+# 注意: QUEUE の指定方法は以前のパイプラインリリースから変更されている
+# 先頭に "-q " を含めてはいけない
+# デフォルトはキューなし（＝ローカル実行）
 QUEUE=""
 #QUEUE="hcp_priority.q"
 
-########################################## INPUTS ########################################## 
+########################################## 入力 ########################################## 
 
-#Scripts called by this script do assume they run on the outputs of the FreeSurfer Pipeline
+# このスクリプトから呼ばれる各スクリプトは、
+# FreeSurfer パイプラインの出力に対して実行されることを前提としている
 
-######################################### DO WORK ##########################################
+######################################### 実行 ##########################################
 
 
 for Subject in $Subjlist ; do
     echo $Subject
 
-    #Input Variables
+    # 入力変数
     SurfaceAtlasDIR="${HCPPIPEDIR_Templates}/standard_mesh_atlases"
     GrayordinatesSpaceDIR="${HCPPIPEDIR_Templates}/91282_Greyordinates"
-    GrayordinatesResolutions="2" #Usually 2mm, if multiple delimit with @, must already exist in templates dir
-    HighResMesh="164" #Usually 164k vertices
-    LowResMeshes="32" #Usually 32k vertices, if multiple delimit with @, must already exist in templates dir
+    GrayordinatesResolutions="2" # 通常は 2mm。複数指定する場合は @ で区切る（テンプレートディレクトリに既存である必要あり）
+    HighResMesh="164" # 通常は 164k 頂点
+    LowResMeshes="32" # 通常は 32k 頂点。複数指定する場合は @ で区切る（テンプレートディレクトリに既存である必要あり）
     SubcorticalGrayLabels="${HCPPIPEDIR_Config}/FreeSurferSubcorticalLabelTableLut.txt"
     FreeSurferLabels="${HCPPIPEDIR_Config}/FreeSurferAllLut.txt"
     ReferenceMyelinMaps="${HCPPIPEDIR_Templates}/standard_mesh_atlases/Conte69.MyelinMap_BC.164k_fs_LR.dscalar.nii"
-    RegName="MSMSulc" #MSMSulc is recommended, if binary is not available use FS (FreeSurfer)
+    RegName="MSMSulc" # MSMSulc が推奨。バイナリが利用できない場合は FS（FreeSurfer）を使用
     UseIndMean="YES"
     if [[ "${command_line_specified_run_local}" == "TRUE" || "$QUEUE" == "" ]] ; then
-        echo "About to locally run ${HCPPIPEDIR}/PostFreeSurfer/PostFreeSurferPipeline.sh"
+        echo "これからローカルで ${HCPPIPEDIR}/PostFreeSurfer/PostFreeSurferPipeline.sh を実行します"
         queuing_command=("$HCPPIPEDIR"/global/scripts/captureoutput.sh)
     else
-        echo "About to use fsl_sub to queue ${HCPPIPEDIR}/PostFreeSurfer/PostFreeSurferPipeline.sh"
+        echo "fsl_sub を用いて ${HCPPIPEDIR}/PostFreeSurfer/PostFreeSurferPipeline.sh をキューに投入します"
         queuing_command=("$FSLDIR/bin/fsl_sub" -q "$QUEUE")
     fi
     job=("${queuing_command[@]}" "$HCPPIPEDIR"/PostFreeSurfer/PostFreeSurferPipeline.sh \
@@ -111,7 +112,7 @@ for Subject in $Subjlist ; do
     
     "${job[@]}"
 
-    # The following lines are used for interactive debugging to set the positional parameters: $1 $2 $3 ...
+    # 以下の行は、対話的デバッグのために位置パラメータ（$1 $2 $3 ...）を設定する際に使用される
 
     echo "set -- --study-folder=$StudyFolder \
         --subject=$Subject \
@@ -128,3 +129,4 @@ for Subject in $Subjlist ; do
 
     echo ". ${EnvironmentScript}"
 done
+

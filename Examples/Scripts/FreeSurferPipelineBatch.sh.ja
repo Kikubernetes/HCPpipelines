@@ -1,0 +1,120 @@
+#!/bin/bash 
+
+get_batch_options() {
+    local arguments=("$@")
+
+    command_line_specified_study_folder=""
+    command_line_specified_session=""
+    command_line_specified_run_local="FALSE"
+
+    local index=0
+    local numArgs=${#arguments[@]}
+    local argument
+
+    while [ ${index} -lt ${numArgs} ]; do
+        argument=${arguments[index]}
+
+        case ${argument} in
+            --StudyFolder=*)
+                command_line_specified_study_folder=${argument#*=}
+                index=$(( index + 1 ))
+                ;;
+            --Subject=*) # 旧来のオプション（互換性のため）。代わりに '--Session' を使用してください
+                command_line_specified_session=${argument#*=}
+                index=$(( index + 1 ))
+                ;;
+            --Session=*)
+                command_line_specified_session=${argument#*=}
+                index=$(( index + 1 ))
+                ;;
+            --runlocal)
+                command_line_specified_run_local="TRUE"
+                index=$(( index + 1 ))
+                ;;
+	    *)
+		echo ""
+		echo "ERROR: 認識できないオプション: ${argument}"
+		echo ""
+		exit 1
+		;;
+        esac
+    done
+}
+
+get_batch_options "$@"
+
+StudyFolder="${HOME}/projects/Pipelines_ExampleData" # セッションフォルダ（sessionID 名）の置き場所
+Sessionlist="100307" # セッションIDのスペース区切りリスト
+EnvironmentScript="${HOME}/git/HCPpipelines/Examples/Scripts/SetUpHCPPipeline.sh" # パイプライン環境設定スクリプト
+
+if [ -n "${command_line_specified_study_folder}" ]; then
+    StudyFolder="${command_line_specified_study_folder}"
+fi
+
+if [ -n "${command_line_specified_session}" ]; then
+    Sessionlist="${command_line_specified_session}"
+fi
+
+# このスクリプトの要件
+#  インストール済みであることが必要なもの: FSL, FreeSurfer, Connectome Workbench (wb_command), gradunwarp（HCP版）
+#  環境変数: HCPPIPEDIR, FSLDIR, FREESURFER_HOME, CARET7DIR, gradient_unwarp.py への PATH
+
+# FreeSurfer 5.3 を使用したい場合は、以下の ${queuing_command} 行を
+# ${HCPPIPEDIR}/FreeSurfer/FreeSurferPipeline-v5.3.0-HCP.sh を使うように変更してください
+
+# パイプライン用の環境変数およびソフトウェアを設定
+source "$EnvironmentScript"
+
+# 呼び出し元のコマンドライン引数をログとして出力
+echo "$@"
+
+# 注意: QUEUE の指定方法は以前のパイプラインリリースから変更されている
+# 先頭に "-q " を含めてはいけない
+# デフォルトはキューなし（＝ローカル実行）
+QUEUE=""
+#QUEUE="hcp_priority.q"
+
+########################################## 入力 ########################################## 
+
+# このスクリプトから呼ばれる各スクリプトは、
+# PreFreeSurfer パイプラインの出力上で実行されることを前提としている
+
+######################################### 実行 ##########################################
+
+for Session in $Sessionlist ; do
+  echo $Session
+
+  # 入力変数
+  SessionID="$Session" # FreeSurfer における Subject ID 名
+  SessionDIR="${StudyFolder}/${Session}/T1w" # FreeSurfer の Subject フォルダを配置する場所
+  T1wImage="${StudyFolder}/${Session}/T1w/T1w_acpc_dc_restore.nii.gz" # FreeSurfer 用 T1w 入力（フル解像度）
+  T1wImageBrain="${StudyFolder}/${Session}/T1w/T1w_acpc_dc_restore_brain.nii.gz" # FreeSurfer 用 T1w 入力（フル解像度・脳抽出済み）
+  T2wImage="${StudyFolder}/${Session}/T1w/T2w_acpc_dc_restore.nii.gz" # FreeSurfer 用 T2w 入力（フル解像度）
+
+  if [[ "${command_line_specified_run_local}" == "TRUE" || "$QUEUE" == "" ]] ; then
+      echo "これからローカルで ${HCPPIPEDIR}/FreeSurfer/FreeSurferPipeline.sh を実行します"
+      queuing_command=("$HCPPIPEDIR"/global/scripts/captureoutput.sh)
+  else
+      echo "fsl_sub を用いて ${HCPPIPEDIR}/FreeSurfer/FreeSurferPipeline.sh をキューに投入します"
+      queuing_command=("$FSLDIR/bin/fsl_sub" -q "$QUEUE")
+  fi
+
+  "${queuing_command[@]}" "$HCPPIPEDIR"/FreeSurfer/FreeSurferPipeline.sh \
+      --session="$Session" \
+      --session-dir="$SessionDIR" \
+      --t1w-image="$T1wImage" \
+      --t1w-brain="$T1wImageBrain" \
+      --t2w-image="$T2wImage"
+      
+  # 以下の行は、対話的デバッグのために位置パラメータ（$1 $2 $3 ...）を設定する際に使用される
+
+  echo "set -- --session=$Session \
+      --session-dir=$SessionDIR \
+      --t1w-image=$T1wImage \
+      --t1w-brain=$T1wImageBrain \
+      --t2w-image=$T2wImage"
+
+  echo ". ${EnvironmentScript}"
+
+done
+

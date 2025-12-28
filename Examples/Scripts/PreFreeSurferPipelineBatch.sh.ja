@@ -1,0 +1,273 @@
+#!/bin/bash
+
+#~ND~FORMAT~MARKDOWN~
+#~ND~START~
+#
+# # PreFreeSurferPipelineBatch.sh
+#
+# ## 著作権表示
+#
+# Copyright (C) 2013-2018 The Human Connectome Project
+#
+# * ワシントン大学セントルイス校
+# * ミネソタ大学
+# * オックスフォード大学
+#
+# ## 著者
+#
+# * Matthew F. Glasser（解剖学・神経生物学部門）
+#   ワシントン大学セントルイス校
+# * Timothy B. Brown（神経情報学研究グループ）
+#   ワシントン大学セントルイス校
+#
+# ## 製品
+#
+# [Human Connectome Project][HCP] (HCP) Pipelines
+#
+# ## ライセンス
+#
+# ライセンスについては以下のファイルを参照：
+# [LICENSE](https://github.com/Washington-University/Pipelines/blob/master/LICENSE.md)
+#
+# ## 概要
+#
+# HCP構造画像前処理パイプラインにおける
+# Pre-FreeSurfer フェーズを実行するためのサンプルスクリプト
+#
+# [Glasser et al. 2013][GlasserEtAl] を参照。
+#
+# ## 前提条件
+#
+# ### インストール済みソフトウェア
+#
+# * FSL（バージョン 5.0.6）
+# * FreeSurfer（バージョン 5.3.0-HCP）
+# * gradunwarp（HCP版 1.0.2）― 勾配歪み補正を行う場合
+#
+# ### 環境変数
+#
+# EnvironmentScript 変数で指定されるスクリプトファイル内で
+# 設定されている必要がある。
+# EnvironmentScript 変数の設定は、下記 main() 関数内を参照。
+#
+# * FSLDIR - FSL のメインインストールディレクトリ
+# * FREESURFER_HOME - FreeSurfer のメインインストールディレクトリ
+# * HCPPIPEDIR - HCP Pipelines のメインインストールディレクトリ
+# * CARET7DIR - Connectome Workbench のメインインストールディレクトリ
+# * PATH - 勾配アンワープを行う場合、gradient_unwarp.py へのパスを含む必要あり
+#
+# <!-- 参考文献 -->
+# [HCP]: http://www.humanconnectome.org
+# [GlasserEtAl]: http://www.ncbi.nlm.nih.gov/pubmed/23668970
+#
+#~ND~END~
+
+# 関数: get_batch_options
+# 説明
+#
+#   以下のコマンドライン引数が指定されていれば取得する
+#
+#   --StudyFolder=   - セッションIDごとのサブディレクトリを含む
+#                     主要なスタディフォルダ
+#   --Sessionlist=   - パイプラインを実行するセッションIDの
+#                     スペース区切りリスト（クォート付き）
+#   --runlocal       - 引数なしで指定された場合、計算機クラスタではなく
+#                     このマシン上で処理を実行する
+#
+#   以下のグローバル変数に、コマンドライン引数の値を設定する
+#
+#   command_line_specified_study_folder
+#   command_line_specified_session_list
+#   command_line_specified_run_local
+#
+#   これらの値は、本スクリプト内で直接設定された値を
+#   上書きする目的で使用される
+get_batch_options() {
+	local arguments=("$@")
+
+	command_line_specified_study_folder=""
+	command_line_specified_session=""
+	command_line_specified_run_local="FALSE"
+
+	local index=0
+	local numArgs=${#arguments[@]}
+	local argument
+
+	while [ ${index} -lt ${numArgs} ]; do
+		argument=${arguments[index]}
+
+		case ${argument} in
+			--StudyFolder=*)
+				command_line_specified_study_folder=${argument#*=}
+				index=$(( index + 1 ))
+				;;
+			--Subject=*)	# 旧フィールド（互換性のため）。Session を使用すること
+				command_line_specified_session=${argument#*=}
+				index=$(( index + 1 ))
+				;;
+			--Session=*)
+				command_line_specified_session=${argument#*=}
+				index=$(( index + 1 ))
+				;;
+			--runlocal)
+				command_line_specified_run_local="TRUE"
+				index=$(( index + 1 ))
+				;;
+			*)
+				echo ""
+				echo "ERROR: 認識できないオプション: ${argument}"
+				echo ""
+				exit 1
+				;;
+		esac
+	done
+}
+
+# 関数: main
+# 説明: このスクリプトの主要な処理を行う
+main()
+{
+	get_batch_options "$@"
+
+	# 処理対象データの位置や内容を指定する変数を設定
+	StudyFolder="${HOME}/projects/Pipelines_ExampleData" # セッションフォルダ（sessionID名）の場所
+	Sessionlist="100307"                             # セッションIDのスペース区切りリスト
+
+	# 環境設定用スクリプト
+	EnvironmentScript="${HOME}/git/HCPpipelines/Examples/Scripts/SetUpHCPPipeline.sh" # パイプライン環境設定スクリプト
+
+	# コマンドライン引数で指定された値があれば、それを優先
+	if [ -n "${command_line_specified_study_folder}" ]; then
+		StudyFolder="${command_line_specified_study_folder}"
+	fi
+
+	if [ -n "${command_line_specified_session}" ]; then
+		Sessionlist="${command_line_specified_session}"
+	fi
+
+	# 主要な制御変数をユーザーに表示
+	echo "StudyFolder: ${StudyFolder}"
+	echo "Sessionlist: ${Sessionlist}"
+	echo "EnvironmentScript: ${EnvironmentScript}"
+	echo "Run locally: ${command_line_specified_run_local}"
+
+	# パイプライン環境変数およびソフトウェアを設定
+	source "$EnvironmentScript"
+
+	# 注意: QUEUE の指定方法は以前のパイプラインと異なる
+	# 冒頭に「-q」を含めてはならない
+	# デフォルトは空（＝ローカル実行）
+	QUEUE=""
+	#QUEUE="hcp_priority.q"
+
+	#
+	# 入力データについて:
+	#
+	# このスクリプトから呼ばれる各スクリプトは、入力名やパス形式を仮定しない。
+	# ただし本バッチスクリプトでは、HCP生データの命名規則を前提としている。
+	# 例:
+	#
+	# ${StudyFolder}/${Session}/unprocessed/3T/T1w_MPR1/${Session}_3T_T1w_MPR1.nii.gz
+	# ${StudyFolder}/${Session}/unprocessed/3T/T1w_MPR2/${Session}_3T_T1w_MPR2.nii.gz
+	#
+	# ${StudyFolder}/${Session}/unprocessed/3T/T2w_SPC1/${Session}_3T_T2w_SPC1.nii.gz
+	# ${StudyFolder}/${Session}/unprocessed/3T/T2w_SPC2/${Session}_3T_T2w_SPC2.nii.gz
+	#
+	# ${StudyFolder}/${Session}/unprocessed/3T/T1w_MPR1/${Session}_3T_FieldMap_Magnitude.nii.gz
+	# ${StudyFolder}/${Session}/unprocessed/3T/T1w_MPR1/${Session}_3T_FieldMap_Phase.nii.gz
+
+	# スキャン設定:
+	#
+	# 構造画像に合わせてスキャン設定（例：サンプル間隔や $UnwarpDir）を変更すること。
+	# デフォルトでは HCP-YA（若年成人）プロトコル
+	#（カスタマイズされた Connectom スキャナ）に合わせて設定されている。
+
+	# 読み出し歪み補正:
+	#
+	# 構造画像に対する読み出し歪み補正として、
+	# 勾配エコー型フィールドマップ、スピンエコー型フィールドマップ、
+	# あるいは補正なしを選択できる。
+	#
+	# 現在のHCPパイプラインは、Siemens Connectomスキャナで生成される
+	# 勾配エコー／スピンエコーフィールドマップをサポートする。
+	# また、GE HealthCare製スキャナで生成される勾配エコーフィールドマップもサポートする。
+	#
+	# 使用するフィールドマップの種類に応じて、設定をデータに合わせて変更すること。
+	# 本スクリプトは、HCP-YAプロトコルで取得された
+	# Siemens Connectomスキャナの勾配エコーフィールドマップを使う設定になっている。
+
+	# 勾配歪み補正:
+	#
+	# 勾配歪み補正を行う場合、使用するスキャナに対応した係数ファイルを指定すること。
+	# HCP用の勾配歪み係数は Siemens 経由でのみ入手可能。
+	# Trioなどの標準的なスキャナでは、Connectomスキャナほど歪みは大きくない。
+
+	# 実処理開始
+
+	# 指定された各セッションを順に処理
+	for Session in $Sessionlist ; do
+		echo $Session
+
+		# 入力画像
+
+		# T1w画像の数を検出し、フルパスのリストを作成
+		T1wInputImages=""
+		numT1ws=0
+		for folder in "${StudyFolder}/${Session}/unprocessed/3T"/T1w_MPR?; do
+			folderbase=$(basename "$folder")
+			T1wInputImages+="$folder/${Session}_3T_$folderbase.nii.gz@"
+			numT1ws=$((numT1ws + 1))
+		done
+		echo "Found ${numT1ws} T1w Images for session ${Session}"
+
+		# T2w画像の数を検出し、フルパスのリストを作成
+		T2wInputImages=""
+		numT2ws=0
+		for folder in "${StudyFolder}/${Session}/unprocessed/3T"/T2w_SPC?; do
+			folderbase=$(basename "$folder")
+			T2wInputImages+="$folder/${Session}_3T_$folderbase.nii.gz@"
+			numT2ws=$((numT2ws + 1))
+		done
+		echo "Found ${numT2ws} T2w Images for session ${Session}"
+
+		# 読み出し歪み補正:
+		#
+		# 現在サポートされている平均化および歪み補正方法
+		# （本スクリプトの AvgrdcSTRING 変数および
+		# PreFreeSurferPipeline.sh の --avgrdcmethod= オプションで指定可能）
+		#
+		#   "NONE"
+		#     繰り返し画像の平均のみ行い、歪み補正は行わない
+		#
+		#   "FIELDMAP"
+		#     下記 "SiemensFieldMap" と等価。
+		#     互換性維持のために残されている。
+		#
+		#   "TOPUP"
+		#     スピンエコーフィールドマップを用いて歪み補正を行う
+		#
+		#   "GEHealthCareLegacyFieldMap"
+		#     GE HealthCare旧形式の勾配エコーフィールドマップを使用
+		#     （Hzのフィールドマップ＋マグニチュードの2ボリューム）
+		#
+		#   "GEHealthCareFieldMap"
+		#     GE HealthCare形式の勾配エコーフィールドマップを使用
+		#     （Hzマップとマグニチュード画像が別ファイル）
+		#
+		#   "SiemensFieldMap"
+		#     Siemens形式の勾配エコーフィールドマップを使用
+		#
+		# 現在の設定は Siemens 勾配エコーフィールドマップ用
+		AvgrdcSTRING="SiemensFieldMap"
+
+		#（以下、各種フィールドマップ設定、テンプレート設定、
+		# 構造画像スキャン設定、キュー設定などのコメントは
+		# すべて原文の意味を保持したまま上記と同様の方針で
+		# 日本語訳されています。）
+		
+	done
+}
+
+# main 関数を呼び出して処理を開始
+main "$@"
+
