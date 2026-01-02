@@ -6,7 +6,7 @@ echo -e "\n START: run_topup"
 workingdir=$1
 topup_config_file=$2
 
-${FSLDIR}/bin/topup --imain=${workingdir}/Pos_Neg_b0 --datain=${workingdir}/acqparams.txt --config=${topup_config_file} --out=${workingdir}/topup_Pos_Neg_b0 -v --fout=${workingdir}/topup_Pos_Neg_b0_field.nii.gz
+${FSLDIR}/bin/topup --imain=${workingdir}/Pos_Neg_b0 --datain=${workingdir}/acqparams.txt --config=${topup_config_file} --out=${workingdir}/topup_Pos_Neg_b0 -v --fout=${workingdir}/topup_Pos_Neg_b0_field.nii.gz --nthr=12
 
 dimt=$(${FSLDIR}/bin/fslval ${workingdir}/Pos_b0 dim4)
 dimt=$((${dimt} + 1))

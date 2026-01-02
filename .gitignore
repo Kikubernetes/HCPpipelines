@@ -14,3 +14,7 @@
 
 # nfs temporaries
 .nfs*
+
+# log files
+*.e\d+$
+*.o\d+$
