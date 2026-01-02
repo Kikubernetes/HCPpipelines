@@ -18,3 +18,8 @@
 # log files
 *.e[0-9]*
 *.o[0-9]*
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo

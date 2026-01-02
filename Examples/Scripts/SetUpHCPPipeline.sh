@@ -7,6 +7,7 @@ SAVEHCPPIPE="${HCPPIPEDIR:-}"
 ## If you leave it blank, and $HCPPIPEDIR already exists in the environment,
 ## that will be used instead (via the SAVEHCPPIPE variable, defined above)
 export HCPPIPEDIR=${HOME}/git/HCPpipelines
+#export HCPPIPEDIR_Config=$HCPPIPEDIR/global/config
 
 # Don't edit this section, it allows sourcing SetUp... without editing it if you set things in advance
 if [[ -z "$HCPPIPEDIR" ]]
